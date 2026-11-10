@@ -1,15 +1,16 @@
 import type { PDFPageProxy, PageViewport, RenderTask } from "pdfjs-dist";
 import {
+  boundsOfPoints,
   capScale,
   detectKind,
-  imageCssToUser,
-  imageUserToCss,
+  imageCssPointToUser,
+  imageUserPointToCss,
   normalizeRotation,
   toArrayBuffer,
   viewportCornersToCss,
 } from "./geometry";
 import { errorName, loadPdfDocument } from "./pdfjs";
-import type { CssRect, PageMetrics, UserRect } from "./types";
+import type { CssRect, PageMetrics, UserPoint, UserRect } from "./types";
 
 export class OpenError extends Error {
   constructor(message: string) {
@@ -20,12 +21,16 @@ export class OpenError extends Error {
 
 export interface PageView {
   readonly metrics: PageMetrics;
+  /** Extra clockwise rotation on top of the file's own rotation. */
+  setExtraRotation(extra: 0 | 90 | 180 | 270): void;
   /** Drop in-flight and queued renders of this page. */
   bump(): void;
   /** Draw the clean page (no redactions) at `scale` pixels per point/pixel. */
   render(canvas: HTMLCanvasElement, scale: number): Promise<boolean>;
   userToCss(rect: UserRect, scale: number): CssRect;
   cssToUser(rect: CssRect, scale: number): UserRect;
+  userPointToCss(point: UserPoint, scale: number): UserPoint;
+  cssPointToUser(point: UserPoint, scale: number): UserPoint;
 }
 
 export interface LoadedDoc {
@@ -43,19 +48,25 @@ function isCancel(err: unknown): boolean {
 }
 
 class PdfPageView implements PageView {
-  readonly metrics: PageMetrics;
+  metrics: PageMetrics;
   private generation = 0;
   private tail: Promise<void> = Promise.resolve();
   private task: RenderTask | null = null;
   private dead = false;
+  private extra: 0 | 90 | 180 | 270 = 0;
+  private readonly baseRotation: 0 | 90 | 180 | 270;
 
   constructor(private readonly page: PDFPageProxy) {
-    const viewport = page.getViewport({ scale: 1 });
-    this.metrics = {
-      width: viewport.width,
-      height: viewport.height,
-      rotation: normalizeRotation(page.rotate),
-    };
+    this.baseRotation = normalizeRotation(page.rotate);
+    this.metrics = this.measure();
+  }
+
+  setExtraRotation(extra: 0 | 90 | 180 | 270): void {
+    const next = normalizeRotation(extra);
+    if (next === this.extra) return;
+    this.extra = next;
+    this.metrics = this.measure();
+    this.bump();
   }
 
   bump(): void {
@@ -80,7 +91,7 @@ class PdfPageView implements PageView {
   private async renderNow(canvas: HTMLCanvasElement, scale: number, gen: number): Promise<boolean> {
     if (this.dead || gen !== this.generation) return false;
     const safe = capScale(this.metrics.width, this.metrics.height, scale);
-    const viewport = this.page.getViewport({ scale: safe });
+    const viewport = this.viewport(safe);
     canvas.width = Math.max(1, Math.floor(viewport.width));
     canvas.height = Math.max(1, Math.floor(viewport.height));
     if (gen !== this.generation) return false;
@@ -113,8 +124,34 @@ class PdfPageView implements PageView {
     return { x, y, w: Math.abs(p2[0] - p1[0]), h: Math.abs(p2[1] - p1[1]) };
   }
 
+  userPointToCss(point: UserPoint, scale: number): UserPoint {
+    const [x, y] = this.viewport(scale).convertToViewportPoint(point.x, point.y) as [number, number];
+    return { x, y };
+  }
+
+  cssPointToUser(point: UserPoint, scale: number): UserPoint {
+    const [x, y] = this.viewport(scale).convertToPdfPoint(point.x, point.y) as [number, number];
+    return { x, y };
+  }
+
+  private totalRotation(): 0 | 90 | 180 | 270 {
+    return normalizeRotation(this.baseRotation + this.extra);
+  }
+
   private viewport(scale: number): PageViewport {
-    return this.page.getViewport({ scale });
+    return this.page.getViewport({ scale, rotation: this.totalRotation() });
+  }
+
+  private measure(): PageMetrics {
+    const visual = this.viewport(1);
+    const source = this.page.getViewport({ scale: 1, rotation: 0 });
+    return {
+      width: visual.width,
+      height: visual.height,
+      rotation: this.totalRotation(),
+      sourceWidth: source.width,
+      sourceHeight: source.height,
+    };
   }
 
   dispose(): void {
@@ -157,14 +194,18 @@ class PdfDoc implements LoadedDoc {
 }
 
 class ImagePageView implements PageView {
-  readonly metrics: PageMetrics;
+  metrics: PageMetrics;
+  private extra: 0 | 90 | 180 | 270 = 0;
 
   constructor(private readonly bitmap: ImageBitmap) {
-    this.metrics = {
-      width: bitmap.width,
-      height: bitmap.height,
-      rotation: 0,
-    };
+    this.metrics = this.measure();
+  }
+
+  setExtraRotation(extra: 0 | 90 | 180 | 270): void {
+    const next = normalizeRotation(extra);
+    if (next === this.extra) return;
+    this.extra = next;
+    this.metrics = this.measure();
   }
 
   bump(): void {
@@ -177,20 +218,60 @@ class ImagePageView implements PageView {
     canvas.height = Math.max(1, Math.floor(this.metrics.height * safe));
     const ctx = canvas.getContext("2d");
     if (!ctx) return Promise.resolve(false);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(this.bitmap, 0, 0, canvas.width, canvas.height);
+    const srcW = this.bitmap.width * safe;
+    const srcH = this.bitmap.height * safe;
+    ctx.save();
+    if (this.extra === 90) {
+      ctx.translate(canvas.width, 0);
+      ctx.rotate(Math.PI / 2);
+    } else if (this.extra === 180) {
+      ctx.translate(canvas.width, canvas.height);
+      ctx.rotate(Math.PI);
+    } else if (this.extra === 270) {
+      ctx.translate(0, canvas.height);
+      ctx.rotate(-Math.PI / 2);
+    }
+    ctx.drawImage(this.bitmap, 0, 0, srcW, srcH);
+    ctx.restore();
     return Promise.resolve(true);
   }
 
   userToCss(rect: UserRect, scale: number): CssRect {
-    return imageUserToCss(rect, this.metrics.height, scale);
+    return boundsOfPoints([
+      this.userPointToCss({ x: rect.x, y: rect.y }, scale),
+      this.userPointToCss({ x: rect.x + rect.w, y: rect.y + rect.h }, scale),
+    ]);
   }
 
   cssToUser(rect: CssRect, scale: number): UserRect {
-    return imageCssToUser(rect, this.metrics.height, scale);
+    return boundsOfPoints([
+      this.cssPointToUser({ x: rect.x, y: rect.y }, scale),
+      this.cssPointToUser({ x: rect.x + rect.w, y: rect.y + rect.h }, scale),
+    ]);
+  }
+
+  userPointToCss(point: UserPoint, scale: number): UserPoint {
+    return imageUserPointToCss(point, this.bitmap.width, this.bitmap.height, this.extra, scale);
+  }
+
+  cssPointToUser(point: UserPoint, scale: number): UserPoint {
+    return imageCssPointToUser(point, this.bitmap.width, this.bitmap.height, this.extra, scale);
+  }
+
+  private measure(): PageMetrics {
+    const swap = this.extra === 90 || this.extra === 270;
+    return {
+      width: swap ? this.bitmap.height : this.bitmap.width,
+      height: swap ? this.bitmap.width : this.bitmap.height,
+      rotation: this.extra,
+      sourceWidth: this.bitmap.width,
+      sourceHeight: this.bitmap.height,
+    };
   }
 }
 
