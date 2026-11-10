@@ -1,4 +1,4 @@
-# FlareMetal PDF 塗改器
+# FlareMetal PDF 編輯器
 
 在瀏覽器裡塗改 PDF、JPG、PNG 的純前端工具。檔案只在您的裝置上處理，**不會上傳到任何伺服器**。部署目標是 [pdf.flaremetal.com](https://pdf.flaremetal.com)。
 

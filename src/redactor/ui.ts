@@ -105,7 +105,7 @@ class RedactorApp {
     this.shell.dataset.tool = "rect";
     this.shell.innerHTML = `
       <header class="topbar glass">
-        <div class="brand">${MARK}<h1>FlareMetal <span>PDF 塗改器</span></h1></div>
+        <div class="brand">${MARK}<h1>FlareMetal <span>PDF 編輯器</span></h1></div>
         <div class="top-actions">
           <button type="button" class="btn" data-open>${icon("folder")}<span class="full">開啟檔案</span><span class="short">開啟</span></button>
           <button type="button" class="btn" data-print disabled>${icon("print")}<span class="full">列印</span><span class="short">列印</span></button>

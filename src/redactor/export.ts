@@ -116,8 +116,8 @@ function scrubMetadata(doc: PDFDocument): void {
   doc.setAuthor("");
   doc.setSubject("");
   doc.setKeywords([]);
-  doc.setProducer("FlareMetal PDF 塗改器");
-  doc.setCreator("FlareMetal PDF 塗改器");
+  doc.setProducer("FlareMetal PDF 編輯器");
+  doc.setCreator("FlareMetal PDF 編輯器");
   const now = new Date();
   doc.setCreationDate(now);
   doc.setModificationDate(now);
