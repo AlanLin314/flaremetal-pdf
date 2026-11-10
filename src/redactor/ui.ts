@@ -119,15 +119,9 @@ class RedactorApp {
           <div class="empty">
             <div class="empty-card glass">
               ${MARK}
-              <h2>在這台裝置上塗改</h2>
-              <p>拖放 PDF、JPG 或 PNG 到這裡，或選擇檔案。檔案只在您的瀏覽器裡處理，不會上傳到任何伺服器。</p>
+              <h2>塗改檔案</h2>
+              <p>拖放或選擇 PDF、JPG、PNG。檔案不會上傳。</p>
               <button type="button" class="btn primary" data-open-empty>${icon("folder")}選擇檔案</button>
-              <ul>
-                <li>用矩形或筆刷遮住內容。筆刷可用滑鼠、觸控或 Apple Pencil，橡皮擦只擦塗改線。</li>
-                <li>每頁可以左轉或右轉 90°，已畫的遮蓋會跟著轉。</li>
-                <li>安全匯出或列印會把每一頁變成圖片，被遮住的內容無法還原。</li>
-                <li>一般匯出只是蓋上色塊或線條，不能用來隱藏機密。</li>
-              </ul>
             </div>
           </div>
           <div class="page-wrap" hidden>
@@ -136,14 +130,14 @@ class RedactorApp {
               <div class="brush-cursor" hidden></div>
             </div>
             <div class="page-rotate glass">
-              <button type="button" class="btn icon" data-turn-page="-90" title="向左轉 90°" aria-label="向左轉 90°">${icon("turnLeft")}</button>
-              <button type="button" class="btn icon" data-turn-page="90" title="向右轉 90°" aria-label="向右轉 90°">${icon("turnRight")}</button>
+              <button type="button" class="btn icon" data-turn-page="-90" title="左轉" aria-label="左轉">${icon("turnLeft")}</button>
+              <button type="button" class="btn icon" data-turn-page="90" title="右轉" aria-label="右轉">${icon("turnRight")}</button>
             </div>
           </div>
         </div>
       </div>
       <div class="dock-wrap">
-        <footer class="status" role="status">尚未開啟檔案 · 純前端處理，不會上傳</footer>
+        <footer class="status" role="status">尚未開啟檔案 · 不會上傳</footer>
         <div class="toolbar glass" role="toolbar" aria-label="塗改工具"></div>
       </div>
       <div class="dropveil glass" hidden>放開以開啟檔案</div>
@@ -301,7 +295,7 @@ class RedactorApp {
 
     this.undoBtn = toolButton("undo", "復原");
     this.redoBtn = toolButton("redo", "重做");
-    this.deleteBtn = toolButton("trash", "刪除選取的矩形");
+    this.deleteBtn = toolButton("trash", "刪除");
     this.undoBtn.addEventListener("click", () => this.undoOnce());
     this.redoBtn.addEventListener("click", () => this.redoOnce());
     this.deleteBtn.addEventListener("click", () => this.deleteSelected());
@@ -309,7 +303,7 @@ class RedactorApp {
     this.rectBtn = toolButton("rect", "矩形");
     this.brushBtn = toolButton("brush", "筆刷");
     this.eraserBtn = toolButton("eraser", "橡皮擦");
-    this.panBtn = toolButton("pan", "平移頁面");
+    this.panBtn = toolButton("pan", "平移");
     this.rectBtn.addEventListener("click", () => this.setTool("rect"));
     this.brushBtn.addEventListener("click", () => this.setTool("brush"));
     this.eraserBtn.addEventListener("click", () => this.setTool("eraser"));
@@ -337,8 +331,8 @@ class RedactorApp {
     this.nextBtn = toolButton("right", "下一頁");
     this.prevBtn.addEventListener("click", () => this.goTo(this.pageIndex - 1));
     this.nextBtn.addEventListener("click", () => this.goTo(this.pageIndex + 1));
-    const allLeft = toolButton("turnLeft", "全部頁面向左轉 90°");
-    const allRight = toolButton("turnRight", "全部頁面向右轉 90°");
+    const allLeft = toolButton("turnLeft", "全部左轉");
+    const allRight = toolButton("turnRight", "全部右轉");
     allLeft.addEventListener("click", () => this.turnPages("all", -90));
     allRight.addEventListener("click", () => this.turnPages("all", 90));
 
@@ -443,8 +437,8 @@ class RedactorApp {
         turn.className = "thumb-turn";
         turn.dataset.turn = String(delta);
         turn.innerHTML = icon(delta < 0 ? "turnLeft" : "turnRight");
-        turn.title = delta < 0 ? "向左轉 90°" : "向右轉 90°";
-        turn.setAttribute("aria-label", `第 ${index + 1} 頁${delta < 0 ? "向左轉" : "向右轉"} 90°`);
+        turn.title = delta < 0 ? "左轉" : "右轉";
+        turn.setAttribute("aria-label", delta < 0 ? "左轉" : "右轉");
         turn.addEventListener("click", (event) => {
           event.stopPropagation();
           this.turnPages(index, delta);
@@ -1051,11 +1045,10 @@ class RedactorApp {
   }
 
   private statusLine(): string {
-    if (!this.doc) return "尚未開啟檔案";
-    const here = this.redactions.filter((item) => item.page === this.pageIndex).length;
+    if (!this.doc) return "尚未開啟檔案 · 不會上傳";
     const turned = normalizeRotation(this.rotations[this.pageIndex] ?? 0);
     const angle = turned ? ` · 已轉 ${turned}°` : "";
-    return `第 ${this.pageIndex + 1} / ${this.doc.pageCount} 頁${angle} · 本頁 ${here} 個遮蓋 · 共 ${this.redactions.length} 個 · 檔案只在這台裝置的瀏覽器裡處理，不會上傳`;
+    return `第 ${this.pageIndex + 1} / ${this.doc.pageCount} 頁${angle}`;
   }
 
   private setStatus(text: string): void {
@@ -1129,29 +1122,24 @@ class RedactorApp {
     const printing = target === "print";
     this.showModal((body) => {
       body.innerHTML = "";
-      const title = el("h2", "", printing ? "列印塗改檔" : "匯出塗改檔");
+      const title = el("h2", "", printing ? "列印" : "匯出");
       title.id = "modal-title";
       const lead = el(
         "p",
         "lead",
         printing
-          ? "列印前先選模式。預設是安全模式，被遮住的內容不會印出來。"
+          ? "預設安全列印，被遮內容無法還原。"
           : this.redactions.length
-            ? `將下載 ${redactedFilename(doc.filename, "pdf")}。請先選一種匯出方式。`
-            : "目前沒有遮蓋，仍可匯出一份副本。",
+            ? `將下載 ${redactedFilename(doc.filename, "pdf")}`
+            : "尚未畫遮蓋，仍可匯出副本。",
       );
       const choices = document.createElement("div");
       choices.className = "choices";
 
       const secure = document.createElement("section");
       secure.className = "choice";
-      const secureTitle = el("h3", "", printing ? "安全列印（無法還原）" : "安全匯出（無法還原）");
-      const secureCopy = el(
-        "p",
-        "",
-        "每一頁會先以高解析度轉成圖片，再把矩形和筆刷畫上去，組成新的 PDF。原本的文字、向量、圖層和 metadata 都不會保留。",
-      );
-      const secureNote = el("p", "", "請注意：輸出檔的文字將無法選取或搜尋，檔案也可能比原本更大。");
+      const secureTitle = el("h3", "", printing ? "安全列印" : "安全匯出");
+      const secureCopy = el("p", "", "每一頁會變成圖片，被遮內容無法還原。");
       const dpiRow = document.createElement("div");
       dpiRow.className = "dpi";
       dpiRow.setAttribute("role", "group");
@@ -1168,31 +1156,24 @@ class RedactorApp {
         });
         dpiRow.append(button);
       }
-      const dpiNote = el(
-        "p",
-        "",
-        doc.kind === "image"
-          ? "圖片以原始像素輸出。DPI 決定 PDF 頁面印出來的尺寸，預設 200。"
-          : "預設 200 DPI。頁數多時會逐頁處理，並顯示進度。",
-      );
       const secureBtn = document.createElement("button");
       secureBtn.type = "button";
       secureBtn.className = "btn primary";
       secureBtn.textContent = printing ? "安全列印" : "安全匯出";
-      secureBtn.addEventListener("click", () => void this.runExport("secure", target));
-      secure.append(secureTitle, secureCopy, secureNote, dpiRow, dpiNote, secureBtn);
+      secureBtn.addEventListener("click", () => this.startOutput("secure", target));
+      secure.append(secureTitle, secureCopy, dpiRow, secureBtn);
 
       const visual = document.createElement("section");
       visual.className = "choice is-warn";
-      const visualTitle = el("h3", "", printing ? "一般列印（只有視覺遮蓋）" : "一般匯出（只有視覺遮蓋）");
+      const visualTitle = el("h3", "", printing ? "一般列印" : "一般匯出");
       const visualCopy = document.createElement("p");
       visualCopy.innerHTML =
-        "<strong>警告：</strong>這只是在原本的檔案上畫實心色塊和線條。底下的文字和圖片仍然存在，可以被複製、搜尋或還原。不適合用來隱藏機密、個資或報價。";
+        "<strong>警告：</strong>只是蓋上色塊或線條，底下的文字仍可複製或還原，不適合隱藏機密。";
       const visualBtn = document.createElement("button");
       visualBtn.type = "button";
       visualBtn.className = "btn";
       visualBtn.textContent = printing ? "一般列印" : "一般匯出";
-      visualBtn.addEventListener("click", () => void this.runExport("visual", target));
+      visualBtn.addEventListener("click", () => this.startOutput("visual", target));
       visual.append(visualTitle, visualCopy, visualBtn);
 
       choices.append(secure, visual);
@@ -1201,12 +1182,12 @@ class RedactorApp {
         const png = document.createElement("section");
         png.className = "choice";
         const pngTitle = el("h3", "", "匯出 PNG");
-        const pngCopy = el("p", "", "遮蓋會直接畫進圖片像素，無法還原。適合只要一張圖、不要 PDF 的情況。");
+        const pngCopy = el("p", "", "輸出成圖片，遮蓋無法還原。");
         const pngBtn = document.createElement("button");
         pngBtn.type = "button";
         pngBtn.className = "btn";
         pngBtn.textContent = "匯出 PNG";
-        pngBtn.addEventListener("click", () => void this.runExport("png", "download"));
+        pngBtn.addEventListener("click", () => this.startOutput("png", "download"));
         png.append(pngTitle, pngCopy, pngBtn);
         choices.append(png);
       }
@@ -1239,7 +1220,29 @@ class RedactorApp {
     });
   }
 
-  private async runExport(kind: "secure" | "visual" | "png", target: "download" | "print" = "download"): Promise<void> {
+  private startOutput(kind: "secure" | "visual" | "png", target: "download" | "print"): void {
+    let printWindow: Window | null = null;
+    if (target === "print" && wantsPrintTab()) {
+      printWindow = window.open("about:blank", "_blank");
+      if (!printWindow) {
+        this.flash("瀏覽器擋下了新分頁。請允許彈出視窗後再列印。");
+        return;
+      }
+      try {
+        printWindow.document.title = "準備列印";
+        printWindow.document.body.textContent = "正在準備列印檔…";
+      } catch {
+        /* about:blank 偶爾不能寫入，仍可稍後改網址 */
+      }
+    }
+    void this.runExport(kind, target, printWindow);
+  }
+
+  private async runExport(
+    kind: "secure" | "visual" | "png",
+    target: "download" | "print" = "download",
+    printWindow: Window | null = null,
+  ): Promise<void> {
     const doc = this.doc;
     if (!doc || this.exporting) return;
     this.exporting = true;
@@ -1248,6 +1251,7 @@ class RedactorApp {
     const signal = this.exportAbort.signal;
     this.setExportUi(true, { page: 0, total: doc.pageCount, label: target === "print" ? "準備列印…" : "準備匯出…" });
     let statusAfter = "";
+    let printed = false;
     try {
       const onProgress = (progress: ExportProgress) => this.setExportUi(true, progress);
       const rotations = this.rotations;
@@ -1262,7 +1266,8 @@ class RedactorApp {
         const how = await printPdf(result.bytes, (frame) => {
           this.printFrame?.remove();
           this.printFrame = frame;
-        });
+        }, printWindow);
+        printed = true;
         this.showPrintReady(how, note);
         statusAfter = how === "tab" ? `已在新分頁開啟 PDF，請在那一頁列印。${note}` : `已送出列印。${note}`;
       } else {
@@ -1273,6 +1278,7 @@ class RedactorApp {
         statusAfter = `已下載 ${filename}。${note}`;
       }
     } catch (err) {
+      if (!printed && printWindow && !printWindow.closed) printWindow.close();
       if (err instanceof DOMException && err.name === "AbortError" && signal.aborted) {
         this.setExportUi(false, null);
         statusAfter = target === "print" ? "已取消列印。" : "已取消匯出。";
@@ -1303,7 +1309,7 @@ class RedactorApp {
     const copy = el(
       "p",
       "lead",
-      note ? `${filename}。${note}若瀏覽器沒有開始下載，請再按一次。` : `已準備 ${filename}。若瀏覽器沒有開始下載，請再按一次。`,
+      note ? `已準備 ${filename}。${note}可再按一次下載。` : `已準備 ${filename}，可再按一次下載。`,
     );
     const again = document.createElement("button");
     again.type = "button";
@@ -1545,28 +1551,57 @@ function wantsPrintTab(): boolean {
 async function printPdf(
   bytes: Uint8Array,
   keep: (frame: HTMLIFrameElement | null) => void,
+  preset: Window | null,
 ): Promise<"iframe" | "tab"> {
   const url = URL.createObjectURL(new Blob([toArrayBuffer(bytes)], { type: "application/pdf" }));
-  const openTab = (): "tab" => {
-    const opened = window.open(url, "_blank", "noopener");
+  const releaseLater = () => {
+    setTimeout(() => URL.revokeObjectURL(url), 120_000);
+  };
+  const showIn = (popup: Window): "tab" => {
+    if (popup.closed) {
+      URL.revokeObjectURL(url);
+      throw new Error("列印分頁已關閉。");
+    }
+    try {
+      popup.location.replace(url);
+    } catch {
+      popup.close();
+      URL.revokeObjectURL(url);
+      throw new Error("無法開啟列印分頁。");
+    }
+    keep(null);
+    releaseLater();
+    return "tab";
+  };
+  if (preset) return showIn(preset);
+  if (wantsPrintTab()) {
+    const opened = window.open("about:blank", "_blank");
     if (!opened) {
       URL.revokeObjectURL(url);
       throw new Error("瀏覽器擋下了新分頁。請允許彈出視窗後再列印。");
     }
-    keep(null);
-    setTimeout(() => URL.revokeObjectURL(url), 120_000);
-    return "tab";
-  };
-  if (wantsPrintTab()) return openTab();
+    return showIn(opened);
+  }
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
-  iframe.style.cssText = "position:fixed;width:0;height:0;border:0;visibility:hidden";
+  iframe.title = "列印";
+  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;pointer-events:none";
   document.body.append(iframe);
   keep(iframe);
+  let timer = 0;
+  let rejectLoad: ((err: Error) => void) | null = null;
+  const onViolation = (event: SecurityPolicyViolationEvent) => {
+    if (event.effectiveDirective === "frame-src" || event.effectiveDirective === "child-src") {
+      window.clearTimeout(timer);
+      rejectLoad?.(new Error("CSP"));
+    }
+  };
+  document.addEventListener("securitypolicyviolation", onViolation);
   try {
     await new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(() => resolve(), 2500);
+      rejectLoad = reject;
+      timer = window.setTimeout(() => resolve(), 2500);
       iframe.onload = () => {
         window.clearTimeout(timer);
         resolve();
@@ -1589,7 +1624,14 @@ async function printPdf(
     return "iframe";
   } catch (err) {
     iframe.remove();
-    if (err instanceof Error && err.message.includes("彈出視窗")) throw err;
-    return openTab();
+    const opened = window.open("about:blank", "_blank");
+    if (!opened) {
+      URL.revokeObjectURL(url);
+      if (err instanceof Error && err.message.includes("彈出視窗")) throw err;
+      throw new Error("瀏覽器擋下了新分頁。請允許彈出視窗後再列印。");
+    }
+    return showIn(opened);
+  } finally {
+    document.removeEventListener("securitypolicyviolation", onViolation);
   }
 }
