@@ -248,7 +248,7 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-columns: 208px minmax(0, 1fr);
   gap: 12px;
   padding: 12px;
 }
@@ -263,19 +263,26 @@ body {
 }
 
 .thumbs {
+  --thumb-box: 120px;
   overflow: auto;
   border-radius: 24px;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  scrollbar-gutter: stable;
 }
 
 .thumb {
+  box-sizing: border-box;
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  height: calc(var(--thumb-box) + 34px);
+  flex: none;
+  display: grid;
+  grid-template-columns: var(--thumb-box) minmax(28px, 1fr);
+  grid-template-rows: var(--thumb-box) 18px;
+  column-gap: 6px;
+  row-gap: 4px;
   padding: 6px;
   border-radius: 16px;
   color: var(--muted);
@@ -288,17 +295,28 @@ body {
 }
 
 .thumb-open {
-  width: 100%;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: var(--thumb-box);
   border: 0;
   background: transparent;
   padding: 0;
   color: inherit;
   border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
 }
 
 .thumb-frame {
   position: relative;
-  display: block;
+  width: var(--thumb-box);
+  height: var(--thumb-box);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--paper);
   border-radius: 8px;
   overflow: hidden;
@@ -306,10 +324,19 @@ body {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
 }
 
+.thumb-fit {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  line-height: 0;
+}
+
 .thumb canvas {
-  width: 100%;
-  height: auto;
   display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
 }
 
 .thumb .marks {
@@ -332,20 +359,27 @@ body {
 
 .thumb-no {
   display: block;
-  margin-top: 4px;
+  height: 18px;
+  margin: 0;
   font-size: 12px;
+  line-height: 18px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
 
 .thumb-turns {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  justify-self: end;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
   gap: 6px;
 }
 
 .thumb-turn {
-  width: 32px;
+  width: 28px;
   height: 28px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -788,7 +822,7 @@ body {
 @media (max-width: 800px) {
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: 124px minmax(0, 1fr);
+    grid-template-rows: 184px minmax(0, 1fr);
   }
 
   .fm-app.is-empty .workspace {
@@ -802,7 +836,7 @@ body {
   }
 
   .thumb {
-    width: 92px;
+    width: calc(var(--thumb-box) + 46px);
     flex: none;
   }
 
@@ -833,8 +867,7 @@ body {
     inset: -16px;
   }
 
-  .btn.icon,
-  .thumb-turn {
+  .btn.icon {
     min-width: 44px;
     min-height: 40px;
   }

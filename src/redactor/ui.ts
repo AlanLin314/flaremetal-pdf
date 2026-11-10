@@ -424,7 +424,7 @@ class RedactorApp {
       const open = document.createElement("button");
       open.type = "button";
       open.className = "thumb-open";
-      open.innerHTML = `<span class="thumb-frame"><canvas></canvas><span class="marks"></span></span><span class="thumb-no"></span>`;
+      open.innerHTML = `<span class="thumb-frame"><span class="thumb-fit"><canvas></canvas><span class="marks"></span></span></span><span class="thumb-no"></span>`;
       const label = open.querySelector(".thumb-no");
       if (label) label.textContent = String(index + 1);
       open.setAttribute("aria-label", `第 ${index + 1} 頁`);
@@ -515,6 +515,7 @@ class RedactorApp {
         button.dataset.ready = "";
         return;
       }
+      placeThumbCanvas(canvas, view.metrics.width, view.metrics.height);
       button.dataset.ready = "1";
     } catch {
       button.dataset.ready = "";
@@ -532,6 +533,7 @@ class RedactorApp {
     thumb.width = width;
     thumb.height = height;
     thumb.getContext("2d")?.drawImage(source, 0, 0, width, height);
+    placeThumbCanvas(thumb, this.view?.metrics.width ?? width, this.view?.metrics.height ?? height);
     button.dataset.ready = "1";
   }
 
@@ -1473,6 +1475,14 @@ function appendStroke(
   node.setAttribute("stroke-linecap", "round");
   node.setAttribute("stroke-linejoin", "round");
   svg.append(node);
+}
+
+function placeThumbCanvas(canvas: HTMLCanvasElement, pageW: number, pageH: number): void {
+  const frame = canvas.closest(".thumb-frame");
+  const box = frame instanceof HTMLElement && frame.clientWidth > 0 ? frame.clientWidth : 120;
+  const scale = Math.min(box / Math.max(pageW, 1), box / Math.max(pageH, 1));
+  canvas.style.width = `${pageW * scale}px`;
+  canvas.style.height = `${pageH * scale}px`;
 }
 
 function toolButton(name: IconName, label: string): HTMLButtonElement {
