@@ -27,6 +27,7 @@ export type Redaction = RectMark | StrokeMark;
 export type HistoryState = {
   redactions: Redaction[];
   rotations: number[];
+  scales?: number[];
 };
 
 export type PageMetrics = {

@@ -1,5 +1,6 @@
 import type { LoadedDoc, PageView } from "./document";
-import { openFile } from "./document";
+import { openFile, pageBitmap } from "./document";
+import { cleanBitmap, loadCleaner, type CleanOptions, type CleanPoint } from "./cleanup";
 import { exportPng, exportSecure, exportVisual, type ExportProgress } from "./export";
 import {
   clamp,
@@ -53,6 +54,29 @@ class RedactorApp {
   private exporting = false;
   private undo: string[] = [];
   private redo: string[] = [];
+  private rasters: Array<ImageBitmap | null> = [];
+  private scales: number[] = [];
+  private rasterUndo: Array<Array<ImageBitmap | null>> = [];
+  private rasterRedo: Array<Array<ImageBitmap | null>> = [];
+  private gestureRasters: Array<ImageBitmap | null> | null = null;
+  private jpegCleaned = true;
+  private cleanToken = 0;
+  private cleanOpen = false;
+  private cleanOpts: CleanOptions = {
+    whiten: true,
+    strength: "medium",
+    deskew: false,
+    perspective: false,
+    binary: false,
+    threshold: 8,
+    corners: null,
+  };
+  private cleanCorners: CleanPoint[] | null = null;
+  private cleanMoved = false;
+  private cleanHolding = false;
+  private cleanSource: ImageBitmap | null = null;
+  private cleanResult: ImageBitmap | null = null;
+  private cleanTimer = 0;
   private gestureBefore: string | null = null;
   private drag: Drag | null = null;
   private mainToken = 0;
@@ -140,6 +164,22 @@ class RedactorApp {
         <footer class="status" role="status">尚未開啟檔案 · 不會上傳</footer>
         <div class="toolbar glass" role="toolbar" aria-label="塗改工具"></div>
       </div>
+      <div class="clean-panel glass" hidden>
+        <div class="clean-head">
+          <h2>整理</h2>
+          <button type="button" class="btn icon" data-clean-close aria-label="關閉整理">${icon("left")}</button>
+        </div>
+        <p class="clean-note">只在這台裝置上處理，不會上傳。建議先整理，再塗改。</p>
+        <div class="clean-view">
+          <div class="clean-source-wrap">
+            <canvas class="clean-source" hidden></canvas>
+            <div class="clean-corners" hidden></div>
+          </div>
+          <canvas class="clean-result"></canvas>
+        </div>
+        <p class="clean-status">開啟檔案後可預覽。</p>
+        <div class="clean-progress" hidden><span></span></div>
+      </div>
       <div class="dropveil glass" hidden>放開以開啟檔案</div>
       <div class="modal-back" hidden>
         <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="modal-title"></div>
@@ -171,6 +211,7 @@ class RedactorApp {
     this.dropveil = this.shell.querySelector(".dropveil") as HTMLElement;
 
     this.buildToolbar();
+    this.buildCleanPanel();
     this.bind();
   }
 
@@ -178,6 +219,7 @@ class RedactorApp {
     this.exportAbort?.abort();
     this.thumbObs?.disconnect();
     this.doc?.close();
+    this.releaseAllRasters();
     this.printFrame?.remove();
     this.ac.abort();
     this.root.replaceChildren();
@@ -308,6 +350,8 @@ class RedactorApp {
     this.brushBtn.addEventListener("click", () => this.setTool("brush"));
     this.eraserBtn.addEventListener("click", () => this.setTool("eraser"));
     this.panBtn.addEventListener("click", () => this.setTool("pan"));
+    const tidyBtn = toolButton("tidy", "整理");
+    tidyBtn.addEventListener("click", () => this.toggleClean());
 
     const zoomOut = toolButton("minus", "縮小");
     const zoomIn = toolButton("plus", "放大");
@@ -338,7 +382,7 @@ class RedactorApp {
 
     const tools = document.createElement("div");
     tools.className = "group";
-    tools.append(this.rectBtn, this.brushBtn, this.eraserBtn, this.panBtn);
+    tools.append(this.rectBtn, this.brushBtn, this.eraserBtn, this.panBtn, tidyBtn);
     const history = document.createElement("div");
     history.className = "group";
     history.append(this.undoBtn, this.redoBtn, this.deleteBtn);
@@ -368,6 +412,7 @@ class RedactorApp {
         this.setStatus(ratio == null ? "正在開啟檔案…" : `正在開啟檔案… ${Math.round(ratio * 100)}%`);
       });
       this.doc?.close();
+      this.releaseAllRasters();
       this.doc = next;
       this.view = null;
       this.pageIndex = 0;
@@ -376,6 +421,11 @@ class RedactorApp {
       this.rotations = Array.from({ length: next.pageCount }, () => 0);
       this.undo = [];
       this.redo = [];
+      this.rasterUndo = [];
+      this.rasterRedo = [];
+      const handed = next.handoffBitmap();
+      this.rasters = Array.from({ length: next.pageCount }, (_, index) => (index === 0 ? handed : null));
+      this.scales = Array.from({ length: next.pageCount }, () => (next.kind === "image" ? 1 : 0));
       this.selectedId = null;
       this.shell.classList.remove("is-empty");
       this.empty.hidden = true;
@@ -888,6 +938,7 @@ class RedactorApp {
     this.stickToTop = true;
     this.syncThumbActive();
     void this.renderMain();
+    this.scheduleClean();
   }
 
   private turnPages(target: number | "all", delta: number): void {
@@ -899,7 +950,10 @@ class RedactorApp {
       this.markThumbDirty(index);
     }
     this.stickToTop = true;
-    void this.renderMain().then(() => this.rerenderDirtyThumbs());
+    void this.renderMain().then(() => {
+      this.rerenderDirtyThumbs();
+      this.scheduleClean();
+    });
   }
 
   private markThumbDirty(index: number): void {
@@ -959,18 +1013,20 @@ class RedactorApp {
   }
 
   private snapshot(): string {
-    const state: HistoryState = { redactions: this.redactions, rotations: this.rotations };
+    const state: HistoryState = { redactions: this.redactions, rotations: this.rotations, scales: this.scales };
     return JSON.stringify(state);
   }
 
   private pushUndo(): void {
     this.undo.push(this.snapshot());
-    if (this.undo.length > 80) this.undo.shift();
-    this.redo = [];
+    this.rasterUndo.push(this.rasters.slice());
+    this.trimHistory();
+    this.clearRedo();
   }
 
   private beginGesture(): void {
     this.gestureBefore = this.snapshot();
+    this.gestureRasters = this.rasters.slice();
   }
 
   private endGesture(): void {
@@ -978,37 +1034,97 @@ class RedactorApp {
     const now = this.snapshot();
     if (now !== this.gestureBefore) {
       this.undo.push(this.gestureBefore);
-      if (this.undo.length > 80) this.undo.shift();
-      this.redo = [];
+      this.rasterUndo.push(this.gestureRasters ?? this.rasters.slice());
+      this.trimHistory();
+      this.clearRedo();
     }
     this.gestureBefore = null;
+    this.gestureRasters = null;
   }
 
-  private restore(raw: string): void {
+  private trimHistory(): void {
+    while (this.undo.length > 80) {
+      this.undo.shift();
+      this.releaseList(this.rasterUndo.shift() ?? []);
+    }
+  }
+
+  private clearRedo(): void {
+    const dropped = this.rasterRedo.flat();
+    this.redo = [];
+    this.rasterRedo = [];
+    this.releaseList(dropped);
+  }
+
+  private releaseList(list: Array<ImageBitmap | null>): void {
+    for (const bitmap of list) {
+      if (bitmap && !this.rasterReferenced(bitmap)) bitmap.close();
+    }
+  }
+
+  private rasterReferenced(bitmap: ImageBitmap): boolean {
+    if (this.rasters.includes(bitmap)) return true;
+    if (this.cleanSource === bitmap || this.cleanResult === bitmap) return true;
+    for (const row of this.rasterUndo) if (row.includes(bitmap)) return true;
+    for (const row of this.rasterRedo) if (row.includes(bitmap)) return true;
+    return false;
+  }
+
+  private releaseAllRasters(): void {
+    const seen = new Set<ImageBitmap>();
+    const lists = [this.rasters, ...this.rasterUndo, ...this.rasterRedo];
+    for (const list of lists) {
+      for (const bitmap of list) {
+        if (bitmap && !seen.has(bitmap)) {
+          seen.add(bitmap);
+          bitmap.close();
+        }
+      }
+    }
+    this.rasters = [];
+    this.rasterUndo = [];
+    this.rasterRedo = [];
+    this.closeCleanBitmaps();
+  }
+
+  private restore(raw: string, rasters: Array<ImageBitmap | null>): void {
     const state = JSON.parse(raw) as HistoryState;
     this.redactions = state.redactions;
     this.rotations = state.rotations ?? this.rotations;
+    this.scales = state.scales ?? this.scales;
+    this.rasters = rasters.slice();
+    const doc = this.doc;
+    if (doc) {
+      for (let index = 0; index < doc.pageCount; index += 1) {
+        doc.setRaster(index, this.rasters[index] ?? null, this.scales[index] || 1);
+      }
+    }
     this.selectedId = null;
     for (let index = 0; index < this.rotations.length; index += 1) this.markThumbDirty(index);
     this.stickToTop = true;
     void this.renderMain().then(() => {
       this.rerenderDirtyThumbs();
       this.syncChrome();
+      this.scheduleClean();
     });
   }
 
   private undoOnce(): void {
     const previous = this.undo.pop();
-    if (!previous) return;
+    const previousRasters = this.rasterUndo.pop();
+    if (!previous || !previousRasters) return;
     this.redo.push(this.snapshot());
-    this.restore(previous);
+    this.rasterRedo.push(this.rasters.slice());
+    this.restore(previous, previousRasters);
   }
 
   private redoOnce(): void {
     const next = this.redo.pop();
-    if (!next) return;
+    const nextRasters = this.rasterRedo.pop();
+    if (!next || !nextRasters) return;
     this.undo.push(this.snapshot());
-    this.restore(next);
+    this.rasterUndo.push(this.rasters.slice());
+    this.restore(next, nextRasters);
   }
 
   private syncChrome(): void {
@@ -1259,9 +1375,24 @@ class RedactorApp {
       const rotations = this.rotations;
       const result =
         kind === "secure"
-          ? await exportSecure({ doc, redactions: this.redactions, rotations, dpi: this.dpi, signal, onProgress })
+          ? await exportSecure({
+              doc,
+              redactions: this.redactions,
+              rotations,
+              dpi: this.dpi,
+              jpegCleaned: this.jpegCleaned,
+              signal,
+              onProgress,
+            })
           : kind === "visual"
-            ? await exportVisual({ doc, redactions: this.redactions, rotations, signal, onProgress })
+            ? await exportVisual({
+                doc,
+                redactions: this.redactions,
+                rotations,
+                jpegCleaned: this.jpegCleaned,
+                signal,
+                onProgress,
+              })
             : await exportPng({ doc, redactions: this.redactions, rotations, signal, onProgress });
       const note = result.capped ? "有頁面超過瀏覽器畫布上限，已自動降低解析度。" : "";
       if (target === "print") {
@@ -1421,6 +1552,390 @@ class RedactorApp {
     this.modalResolver = null;
     resolve?.();
   }
+
+  private buildCleanPanel(): void {
+    const panel = this.shell.querySelector(".clean-panel") as HTMLElement;
+    const controls = document.createElement("div");
+    controls.className = "clean-controls";
+    const toggles: Array<[keyof CleanOptions, string]> = [
+      ["whiten", "底色變白"],
+      ["deskew", "自動轉正"],
+      ["perspective", "找四角拉平"],
+      ["binary", "黑白高對比"],
+    ];
+    for (const [key, label] of toggles) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn clean-toggle";
+      button.dataset.clean = key;
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        if (key === "whiten" || key === "deskew" || key === "perspective" || key === "binary") {
+          this.cleanOpts = { ...this.cleanOpts, [key]: !this.cleanOpts[key] };
+          if (key === "perspective") this.cleanMoved = false;
+          this.syncCleanControls();
+          this.scheduleClean();
+        }
+      });
+      controls.append(button);
+    }
+    const strength = document.createElement("div");
+    strength.className = "clean-strength";
+    strength.dataset.cleanStrength = "1";
+    for (const [id, label] of [
+      ["light", "輕"],
+      ["medium", "中"],
+      ["strong", "強"],
+    ] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn";
+      button.dataset.strength = id;
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        this.cleanOpts = { ...this.cleanOpts, strength: id };
+        this.syncCleanControls();
+        this.scheduleClean();
+      });
+      strength.append(button);
+    }
+    const threshold = document.createElement("label");
+    threshold.className = "clean-threshold";
+    threshold.dataset.cleanThreshold = "1";
+    threshold.textContent = "門檻";
+    const range = document.createElement("input");
+    range.type = "range";
+    range.min = "2";
+    range.max = "21";
+    range.value = "8";
+    range.addEventListener("input", () => {
+      this.cleanOpts = { ...this.cleanOpts, threshold: Number(range.value) || 8 };
+      this.scheduleClean();
+    });
+    threshold.append(range);
+    const jpeg = document.createElement("label");
+    jpeg.className = "clean-jpeg";
+    const jpegInput = document.createElement("input");
+    jpegInput.type = "checkbox";
+    jpegInput.checked = true;
+    jpegInput.addEventListener("change", () => {
+      this.jpegCleaned = jpegInput.checked;
+    });
+    jpeg.append(jpegInput, document.createTextNode("整理後的頁面用 JPEG 壓縮"));
+    const hold = document.createElement("button");
+    hold.type = "button";
+    hold.className = "btn";
+    hold.textContent = "按住看原圖";
+    hold.addEventListener("pointerdown", () => {
+      this.cleanHolding = true;
+      this.paintCleanPreview();
+    });
+    const release = () => {
+      this.cleanHolding = false;
+      this.paintCleanPreview();
+    };
+    hold.addEventListener("pointerup", release);
+    hold.addEventListener("pointerleave", release);
+    const actions = document.createElement("div");
+    actions.className = "clean-actions";
+    const one = document.createElement("button");
+    one.type = "button";
+    one.className = "btn primary";
+    one.textContent = "套用到本頁";
+    one.addEventListener("click", () => void this.applyClean("page"));
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "btn";
+    all.textContent = "套用到全部頁面";
+    all.addEventListener("click", () => void this.applyClean("all"));
+    actions.append(one, all);
+    const view = panel.querySelector(".clean-view") as HTMLElement;
+    view.insertAdjacentElement("afterend", controls);
+    controls.after(strength, threshold, jpeg, hold, actions);
+    panel.querySelector("[data-clean-close]")?.addEventListener("click", () => this.toggleClean(false));
+    this.syncCleanControls();
+  }
+
+  private toggleClean(force?: boolean): void {
+    if (!this.doc) return;
+    const panel = this.shell.querySelector(".clean-panel") as HTMLElement;
+    this.cleanOpen = force ?? !this.cleanOpen;
+    panel.hidden = !this.cleanOpen;
+    if (!this.cleanOpen) return;
+    this.cleanMoved = false;
+    this.setStatus("正在載入整理工具…");
+    void loadCleaner()
+      .then(() => {
+        this.setStatus(this.statusLine());
+        this.scheduleClean();
+      })
+      .catch((err: unknown) => {
+        this.showError(err instanceof Error ? err.message : "無法載入整理工具。");
+      });
+  }
+
+  private syncCleanControls(): void {
+    const panel = this.shell.querySelector(".clean-panel");
+    if (!panel) return;
+    for (const button of panel.querySelectorAll<HTMLButtonElement>("[data-clean]")) {
+      const key = button.dataset.clean as keyof CleanOptions;
+      const on = Boolean(this.cleanOpts[key]);
+      button.classList.toggle("is-on", on);
+      button.setAttribute("aria-pressed", String(on));
+    }
+    const strength = panel.querySelector<HTMLElement>("[data-clean-strength]");
+    if (strength) strength.hidden = !this.cleanOpts.whiten;
+    for (const button of panel.querySelectorAll<HTMLButtonElement>("[data-strength]")) {
+      button.classList.toggle("is-on", button.dataset.strength === this.cleanOpts.strength);
+    }
+    const threshold = panel.querySelector<HTMLElement>("[data-clean-threshold]");
+    if (threshold) threshold.hidden = !this.cleanOpts.binary;
+  }
+
+  private scheduleClean(): void {
+    if (!this.cleanOpen || !this.doc) return;
+    window.clearTimeout(this.cleanTimer);
+    this.cleanTimer = window.setTimeout(() => void this.runCleanPreview(), 180);
+  }
+
+  private async runCleanPreview(): Promise<void> {
+    const doc = this.doc;
+    if (!doc || !this.cleanOpen) return;
+    const token = ++this.cleanToken;
+    const status = this.shell.querySelector(".clean-status");
+    if (status) status.textContent = "正在預覽…";
+    try {
+      await loadCleaner();
+      const view = await this.pageView(this.pageIndex);
+      const full = cleanupScale(view, doc.kind === "pdf" && !doc.isRaster(this.pageIndex));
+      const edge = Math.max(view.metrics.width, view.metrics.height) * full;
+      const previewScale = edge > 900 ? full * (900 / edge) : full;
+      const rendered = await pageBitmap(view, previewScale);
+      if (token !== this.cleanToken) return;
+      const source = await createImageBitmap(rendered.canvas);
+      rendered.canvas.width = 1;
+      rendered.canvas.height = 1;
+      const corners =
+        this.cleanOpts.perspective && this.cleanMoved && this.cleanCorners
+          ? this.cleanCorners.map((point) => ({ ...point }))
+          : null;
+      const result = await cleanBitmap(source, { ...this.cleanOpts, corners });
+      if (token !== this.cleanToken) {
+        source.close();
+        result.bitmap.close();
+        return;
+      }
+      this.cleanSource?.close();
+      this.cleanResult?.close();
+      this.cleanSource = source;
+      this.cleanResult = result.bitmap;
+      if (!this.cleanMoved) this.cleanCorners = result.corners;
+      if (status) {
+        const bits = [
+          this.cleanOpts.perspective ? (result.foundQuad ? "已找到紙張四角" : "沒找到紙張，可自行拖角") : "",
+          this.cleanOpts.deskew ? `轉正 ${result.angle.toFixed(1)}°` : "",
+        ].filter(Boolean);
+        status.textContent = bits.join(" · ") || "預覽已更新";
+      }
+      this.paintCleanPreview();
+    } catch (err) {
+      if (token !== this.cleanToken) return;
+      if (status) status.textContent = err instanceof Error ? err.message : "預覽失敗。";
+    }
+  }
+
+  private paintCleanPreview(): void {
+    const panel = this.shell.querySelector(".clean-panel");
+    if (!panel) return;
+    const sourceCanvas = panel.querySelector("canvas.clean-source") as HTMLCanvasElement;
+    const resultCanvas = panel.querySelector("canvas.clean-result") as HTMLCanvasElement;
+    const result = this.cleanHolding ? this.cleanSource : this.cleanResult ?? this.cleanSource;
+    if (result) drawBitmap(resultCanvas, result);
+    const showCorners = Boolean(this.cleanOpts.perspective && !this.cleanHolding && this.cleanSource && this.cleanCorners);
+    const wrap = panel.querySelector(".clean-source-wrap") as HTMLElement;
+    wrap.hidden = !showCorners;
+    sourceCanvas.hidden = !showCorners;
+    if (showCorners && this.cleanSource) drawBitmap(sourceCanvas, this.cleanSource);
+    const layer = panel.querySelector(".clean-corners") as HTMLElement;
+    layer.hidden = !showCorners;
+    layer.replaceChildren();
+    if (!showCorners || !this.cleanCorners || !this.cleanSource) return;
+    const width = this.cleanSource.width;
+    const height = this.cleanSource.height;
+    this.cleanCorners.forEach((point, index) => {
+      const handle = document.createElement("button");
+      handle.type = "button";
+      handle.className = "clean-handle";
+      handle.style.left = `${(point.x / width) * 100}%`;
+      handle.style.top = `${(point.y / height) * 100}%`;
+      handle.title = "拖曳角點";
+      handle.setAttribute("aria-label", `角點 ${index + 1}`);
+      handle.addEventListener("pointerdown", (event) => this.dragCorner(event, index));
+      layer.append(handle);
+    });
+  }
+
+  private dragCorner(event: PointerEvent, index: number): void {
+    const layer = this.shell.querySelector(".clean-corners") as HTMLElement;
+    const source = this.cleanSource;
+    const corners = this.cleanCorners;
+    if (!source || !corners) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const move = (next: PointerEvent) => {
+      const rect = layer.getBoundingClientRect();
+      const x = clamp(((next.clientX - rect.left) / Math.max(rect.width, 1)) * source.width, 0, source.width - 1);
+      const y = clamp(((next.clientY - rect.top) / Math.max(rect.height, 1)) * source.height, 0, source.height - 1);
+      corners[index] = { x, y };
+      this.cleanCorners = corners;
+      this.cleanMoved = true;
+      const handle = layer.children[index] as HTMLElement | undefined;
+      if (handle) {
+        handle.style.left = `${(x / source.width) * 100}%`;
+        handle.style.top = `${(y / source.height) * 100}%`;
+      }
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      this.scheduleClean();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  private async applyClean(scope: "page" | "all"): Promise<void> {
+    const doc = this.doc;
+    if (!doc || this.busy) {
+      this.setStatus(this.busy ? "還在處理上一項工作。" : "尚未開啟檔案。");
+      return;
+    }
+    this.setStatus("開始整理…");
+    const indexes = scope === "all" ? Array.from({ length: doc.pageCount }, (_, index) => index) : [this.pageIndex];
+    const geometry = this.cleanOpts.perspective || this.cleanOpts.deskew;
+    const marked = indexes.some((index) => this.redactions.some((item) => item.page === index));
+    if (geometry && marked) {
+      const ok = await this.confirm("裁切或轉正會改變頁面形狀，這些頁面上的遮蓋會被清掉。建議先整理，再塗改。要繼續嗎？");
+      if (!ok) return;
+    }
+    this.busy = true;
+    this.syncChrome();
+    const bar = this.shell.querySelector(".clean-progress") as HTMLElement;
+    const fill = bar.querySelector("span") as HTMLElement;
+    bar.hidden = false;
+    try {
+      await loadCleaner();
+      this.pushUndo();
+      for (let step = 0; step < indexes.length; step += 1) {
+        const index = indexes[step];
+        fill.style.width = `${Math.round((step / indexes.length) * 100)}%`;
+        this.setStatus(`正在整理第 ${index + 1} / ${doc.pageCount} 頁`);
+        const view = await this.pageView(index);
+        const fromPdf = doc.kind === "pdf" && !doc.isRaster(index);
+        const scale = cleanupScale(view, fromPdf);
+        const rendered = await pageBitmap(view, scale);
+        const source = await createImageBitmap(rendered.canvas);
+        const canvasH = rendered.canvas.height;
+        rendered.canvas.width = 1;
+        rendered.canvas.height = 1;
+        let corners: CleanPoint[] | null = null;
+        if (this.cleanOpts.perspective && index === this.pageIndex && this.cleanCorners && this.cleanSource) {
+          const sx = source.width / this.cleanSource.width;
+          const sy = source.height / this.cleanSource.height;
+          corners = this.cleanCorners.map((point) => ({ x: point.x * sx, y: point.y * sy }));
+        }
+        const result = await cleanBitmap(source, { ...this.cleanOpts, corners });
+        const sourceW = source.width;
+        const sourceH = source.height;
+        source.close();
+        const quad = corners ?? result.corners;
+        const changed =
+          (this.cleanOpts.perspective && !cornersNearEdge(quad, sourceW, sourceH)) ||
+          (this.cleanOpts.deskew && Math.abs(result.angle) > 0.3);
+        if (changed) this.redactions = this.redactions.filter((item) => item.page !== index);
+        else this.redactions = remapMarks(view, rendered.scale, canvasH, index, this.redactions);
+        const px = fromPdf ? scale : this.scales[index] || 1;
+        this.rasters[index] = result.bitmap;
+        this.scales[index] = px;
+        this.rotations[index] = 0;
+        doc.setRaster(index, result.bitmap, px);
+        this.markThumbDirty(index);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      fill.style.width = "100%";
+      this.cleanMoved = false;
+      this.stickToTop = true;
+      await this.renderMain();
+      this.rerenderDirtyThumbs();
+      this.setStatus(`已整理 ${indexes.length} 頁。`);
+      this.scheduleClean();
+    } catch (err) {
+      this.showError(err instanceof Error ? err.message : "整理失敗。");
+    } finally {
+      bar.hidden = true;
+      this.busy = false;
+      this.syncChrome();
+    }
+  }
+
+  private closeCleanBitmaps(): void {
+    this.cleanSource?.close();
+    this.cleanResult?.close();
+    this.cleanSource = null;
+    this.cleanResult = null;
+  }
+}
+
+function cleanupScale(view: PageView, fromPdf: boolean): number {
+  const edge = Math.max(view.metrics.width, view.metrics.height, 1);
+  if (!fromPdf) return Math.min(1, 2200 / edge);
+  return Math.min(170 / 72, 2200 / Math.max(view.metrics.width, 1));
+}
+
+function cornersNearEdge(corners: CleanPoint[], width: number, height: number): boolean {
+  if (corners.length !== 4) return false;
+  const edges = [
+    { x: 0, y: 0 },
+    { x: width - 1, y: 0 },
+    { x: width - 1, y: height - 1 },
+    { x: 0, y: height - 1 },
+  ];
+  const slack = Math.max(width, height) * 0.04;
+  return corners.every((point, index) => Math.hypot(point.x - edges[index].x, point.y - edges[index].y) <= slack);
+}
+
+function drawBitmap(canvas: HTMLCanvasElement, bitmap: ImageBitmap): void {
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0);
+}
+
+function remapMarks(
+  view: PageView,
+  scale: number,
+  canvasHeight: number,
+  page: number,
+  marks: Redaction[],
+): Redaction[] {
+  const toNew = (point: UserPoint): UserPoint => {
+    const css = view.userPointToCss(point, scale);
+    return { x: css.x, y: canvasHeight - css.y };
+  };
+  return marks.map((item) => {
+    if (item.page !== page) return item;
+    if (item.kind === "stroke") {
+      return { ...item, width: item.width * scale, points: item.points.map(toNew) };
+    }
+    const a = toNew({ x: item.rect.x, y: item.rect.y });
+    const b = toNew({ x: item.rect.x + item.rect.w, y: item.rect.y + item.rect.h });
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    return { ...item, rect: { x, y, w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) } };
+  });
 }
 
 function appendMark(svg: SVGSVGElement, view: PageView, item: Redaction, scale: number): void {

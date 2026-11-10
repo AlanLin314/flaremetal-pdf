@@ -21,6 +21,7 @@ const PATHS = {
   pan: '<path d="M12 3.5v17"/><path d="M3.5 12h17"/><path d="m8 7 4-4 4 4"/><path d="m8 17 4 4 4-4"/><path d="m7 8-4 4 4 4"/><path d="m17 8 4 4-4 4"/>',
   turnLeft: '<path d="M4 12a8 8 0 1 0 2.6-6"/><path d="M4 4.5V9h4.5"/>',
   turnRight: '<path d="M20 12a8 8 0 1 1-2.6-6"/><path d="M20 4.5V9h-4.5"/>',
+  tidy: '<path d="M5 7.5h14"/><path d="M6.5 12h11"/><path d="M8 16.5h8"/><path d="m8 7.5 2.2-3h3.6l2.2 3"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

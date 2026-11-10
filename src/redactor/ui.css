@@ -912,3 +912,125 @@ body {
     transform: none;
   }
 }
+
+.clean-panel {
+  position: fixed;
+  z-index: 35;
+  top: 78px;
+  right: 16px;
+  bottom: 96px;
+  width: min(340px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 24px;
+  overflow: auto;
+}
+
+.clean-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.clean-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.clean-note,
+.clean-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.clean-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clean-source-wrap {
+  position: relative;
+}
+
+.clean-source,
+.clean-result {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #ffffff;
+  border-radius: 12px;
+}
+
+.clean-corners {
+  position: absolute;
+  inset: 0;
+}
+
+.clean-handle {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: #ffffff;
+  padding: 0;
+  touch-action: none;
+}
+
+.clean-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.clean-strength,
+.clean-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.clean-strength .btn,
+.clean-actions .btn {
+  flex: 1;
+}
+
+.clean-threshold,
+.clean-jpeg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.clean-threshold input[type="range"] {
+  flex: 1;
+}
+
+.clean-progress {
+  height: 8px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  overflow: hidden;
+}
+
+.clean-progress > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+
+@media (max-width: 800px) {
+  .clean-panel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    height: min(72dvh, 560px);
+  }
+}

@@ -40,6 +40,19 @@ export interface LoadedDoc {
   /** Original PDF bytes kept for visual-only export. */
   pdfBytes?: Uint8Array;
   getPage(index: number): Promise<PageView>;
+  /** True when this page is a processed bitmap rather than the original PDF page. */
+  isRaster(index: number): boolean;
+  /** Pixels per PDF point for a raster page. Images use 1. */
+  rasterScale(index: number): number;
+  /** The bitmap currently shown for this page, if it is a raster. */
+  liveBitmap(index: number): ImageBitmap | null;
+  /**
+   * Show `bitmap` for this page, or restore the original PDF page when null.
+   * The document does not close bitmaps; the caller owns them.
+   */
+  setRaster(index: number, bitmap: ImageBitmap | null, pxPerPoint: number): void;
+  /** Give bitmap lifetime to the caller. Images only. */
+  handoffBitmap(): ImageBitmap | null;
   close(): void;
 }
 
@@ -165,6 +178,7 @@ class PdfDoc implements LoadedDoc {
   readonly kind = "pdf" as const;
   readonly pageCount: number;
   private readonly pages = new Map<number, PdfPageView>();
+  private readonly rasters = new Map<number, { view: ImagePageView; bitmap: ImageBitmap; pxPerPoint: number }>();
   private closed = false;
 
   constructor(
@@ -177,6 +191,8 @@ class PdfDoc implements LoadedDoc {
 
   async getPage(index: number): Promise<PageView> {
     if (this.closed) throw new OpenError("檔案已關閉。");
+    const raster = this.rasters.get(index);
+    if (raster) return raster.view;
     const cached = this.pages.get(index);
     if (cached) return cached;
     const proxy = await this.pdf.getPage(index + 1);
@@ -185,10 +201,36 @@ class PdfDoc implements LoadedDoc {
     return view;
   }
 
+  isRaster(index: number): boolean {
+    return this.rasters.has(index);
+  }
+
+  rasterScale(index: number): number {
+    return this.rasters.get(index)?.pxPerPoint ?? 1;
+  }
+
+  liveBitmap(index: number): ImageBitmap | null {
+    return this.rasters.get(index)?.bitmap ?? null;
+  }
+
+  setRaster(index: number, bitmap: ImageBitmap | null, pxPerPoint: number): void {
+    if (this.closed) return;
+    if (!bitmap) {
+      this.rasters.delete(index);
+      return;
+    }
+    this.rasters.set(index, { view: new ImagePageView(bitmap), bitmap, pxPerPoint });
+  }
+
+  handoffBitmap(): ImageBitmap | null {
+    return null;
+  }
+
   close(): void {
     this.closed = true;
     for (const page of this.pages.values()) page.dispose();
     this.pages.clear();
+    this.rasters.clear();
     void this.pdf.destroy();
   }
 }
@@ -278,13 +320,20 @@ class ImagePageView implements PageView {
 class ImageDoc implements LoadedDoc {
   readonly kind = "image" as const;
   readonly pageCount = 1;
-  private readonly view: ImagePageView;
+  private view: ImagePageView;
+  private bitmap: ImageBitmap;
+  private readonly original: ImageBitmap;
+  private pxPerPoint = 1;
+  private replaced = false;
+  private owns = true;
   private closed = false;
 
   constructor(
     readonly filename: string,
-    private readonly bitmap: ImageBitmap,
+    bitmap: ImageBitmap,
   ) {
+    this.original = bitmap;
+    this.bitmap = bitmap;
     this.view = new ImagePageView(bitmap);
   }
 
@@ -293,10 +342,37 @@ class ImageDoc implements LoadedDoc {
     return Promise.resolve(this.view);
   }
 
+  isRaster(index: number): boolean {
+    return index === 0 && this.replaced;
+  }
+
+  rasterScale(index: number): number {
+    return index === 0 ? this.pxPerPoint : 1;
+  }
+
+  liveBitmap(index: number): ImageBitmap | null {
+    return index === 0 ? this.bitmap : null;
+  }
+
+  setRaster(index: number, bitmap: ImageBitmap | null, pxPerPoint: number): void {
+    if (this.closed || index !== 0) return;
+    const next = bitmap ?? this.original;
+    this.owns = false;
+    this.bitmap = next;
+    this.view = new ImagePageView(next);
+    this.pxPerPoint = bitmap ? pxPerPoint || 1 : 1;
+    this.replaced = next !== this.original;
+  }
+
+  handoffBitmap(): ImageBitmap | null {
+    this.owns = false;
+    return this.original;
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.bitmap.close();
+    if (this.owns) this.bitmap.close();
   }
 }
 
