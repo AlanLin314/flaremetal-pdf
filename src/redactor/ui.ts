@@ -76,7 +76,9 @@ class RedactorApp {
   private cleanHolding = false;
   private cleanSource: ImageBitmap | null = null;
   private cleanResult: ImageBitmap | null = null;
+  private scrollTimer = 0;
   private cleanTimer = 0;
+  private theme: "system" | "light" | "dark" = "system";
   private gestureBefore: string | null = null;
   private drag: Drag | null = null;
   private mainToken = 0;
@@ -128,16 +130,34 @@ class RedactorApp {
     this.shell.className = "fm-app is-empty";
     this.shell.dataset.tool = "rect";
     this.shell.innerHTML = `
+      <svg class="liquid-svg" aria-hidden="true" focusable="false">
+        <filter id="liquid-edge" x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="2" seed="2" result="noise"/>
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G"/>
+        </filter>
+      </svg>
+      <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
       <header class="topbar glass">
-        <div class="brand">${MARK}<h1>FlareMetal <span>PDF 編輯器</span></h1></div>
+        <div class="brand">${MARK}<h1>FlareMetal <span>PDF</span></h1></div>
         <div class="top-actions">
-          <button type="button" class="btn" data-open>${icon("folder")}<span class="full">開啟檔案</span><span class="short">開啟</span></button>
+          <div class="theme-menu">
+            <button type="button" class="btn icon" data-theme-toggle title="外觀" aria-label="外觀" aria-expanded="false">${icon("theme")}</button>
+            <div class="theme-pop glass" hidden>
+              <button type="button" data-theme="light">淺色</button>
+              <button type="button" data-theme="dark">深色</button>
+              <button type="button" data-theme="system">跟隨系統</button>
+            </div>
+          </div>
+          <button type="button" class="btn" data-open>${icon("folder")}<span class="full">開啟</span><span class="short">開啟</span></button>
           <button type="button" class="btn" data-print disabled>${icon("print")}<span class="full">列印</span><span class="short">列印</span></button>
           <button type="button" class="btn primary" data-export disabled>${icon("download")}<span class="full">匯出</span><span class="short">匯出</span></button>
         </div>
       </header>
       <div class="workspace">
-        <aside class="thumbs glass" aria-label="頁面縮圖"></aside>
+        <div class="rail">
+          <button type="button" class="btn icon rail-toggle" data-rail title="縮圖" aria-label="縮圖" aria-expanded="true">${icon("left")}</button>
+          <aside class="thumbs" aria-label="頁面縮圖"></aside>
+        </div>
         <div class="stage">
           <p class="alert" hidden></p>
           <div class="empty">
@@ -161,8 +181,13 @@ class RedactorApp {
         </div>
       </div>
       <div class="dock-wrap">
+        <div class="dock-row">
+          <div class="history-dock glass" role="toolbar" aria-label="復原"></div>
+          <div class="toolbar glass" role="toolbar" aria-label="塗改工具"></div>
+        </div>
+      </div>
+      <div class="zoom-dock glass" role="toolbar" aria-label="縮放與頁面">
         <footer class="status" role="status">尚未開啟檔案 · 不會上傳</footer>
-        <div class="toolbar glass" role="toolbar" aria-label="塗改工具"></div>
       </div>
       <div class="clean-panel glass" hidden>
         <div class="clean-head">
@@ -186,6 +211,9 @@ class RedactorApp {
       </div>
     `;
     this.root.append(this.shell);
+    this.applyTheme(this.readTheme());
+    if (navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4) this.shell.classList.add("is-lite");
+    if (typeof CSS !== "undefined" && CSS.supports("filter", "url(#liquid-edge)")) this.shell.classList.add("has-refract");
 
     this.fileInput = document.createElement("input");
     this.fileInput.type = "file";
@@ -251,7 +279,43 @@ class RedactorApp {
     this.overlay.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
 
     window.addEventListener("keydown", (event) => this.onKey(event), { signal });
+    this.stage.addEventListener("scroll", () => {
+      this.shell.classList.add("is-scrolling");
+      window.clearTimeout(this.scrollTimer);
+      this.scrollTimer = window.setTimeout(() => this.shell.classList.remove("is-scrolling"), 160);
+    }, { signal, passive: true });
+
+    this.shell.addEventListener("pointermove", (event) => {
+      const glass = event.target instanceof Element ? event.target.closest(".glass") : null;
+      if (!(glass instanceof HTMLElement)) return;
+      const rect = glass.getBoundingClientRect();
+      glass.style.setProperty("--mx", `${event.clientX - rect.left}px`);
+      glass.style.setProperty("--my", `${event.clientY - rect.top}px`);
+    }, { signal });
+
+    this.shell.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
+      const pop = this.shell.querySelector(".theme-pop") as HTMLElement | null;
+      if (!pop) return;
+      pop.hidden = !pop.hidden;
+      this.shell.querySelector("[data-theme-toggle]")?.setAttribute("aria-expanded", String(!pop.hidden));
+    }, { signal });
+    this.shell.querySelectorAll<HTMLButtonElement>("[data-theme]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const next = button.dataset.theme;
+        if (next === "light" || next === "dark" || next === "system") this.applyTheme(next);
+        const pop = this.shell.querySelector(".theme-pop") as HTMLElement | null;
+        if (pop) pop.hidden = true;
+      }, { signal });
+    });
+    this.shell.querySelector("[data-rail]")?.addEventListener("click", () => {
+      const closed = this.shell.classList.toggle("is-rail-closed");
+      const button = this.shell.querySelector("[data-rail]");
+      button?.setAttribute("aria-expanded", String(!closed));
+      if (button) button.innerHTML = icon(closed ? "right" : "left");
+    }, { signal });
+
     window.addEventListener("resize", () => {
+      this.placeToolIndicator();
       if (this.doc && this.zoomMode === "fit-width") void this.renderMain();
     }, { signal });
 
@@ -381,8 +445,10 @@ class RedactorApp {
     allRight.addEventListener("click", () => this.turnPages("all", 90));
 
     const tools = document.createElement("div");
-    tools.className = "group";
-    tools.append(this.rectBtn, this.brushBtn, this.eraserBtn, this.panBtn, tidyBtn);
+    tools.className = "group tools";
+    const indicator = document.createElement("span");
+    indicator.className = "tool-indicator";
+    tools.append(indicator, this.rectBtn, this.brushBtn, this.eraserBtn, this.panBtn, tidyBtn);
     const history = document.createElement("div");
     history.className = "group";
     history.append(this.undoBtn, this.redoBtn, this.deleteBtn);
@@ -393,8 +459,46 @@ class RedactorApp {
     pages.className = "group";
     pages.append(this.prevBtn, this.nextBtn, allLeft, allRight);
 
-    this.toolbar.append(tools, sep(), size, sep(), colorGroup, sep(), history, sep(), zoom, sep(), pages);
+    const historyDock = this.shell.querySelector(".history-dock");
+    const zoomDock = this.shell.querySelector(".zoom-dock");
+    historyDock?.append(history);
+    this.toolbar.append(tools, sep(), size, sep(), colorGroup);
+    zoomDock?.append(zoom, pages);
     this.syncChrome();
+  }
+
+  private readTheme(): "system" | "light" | "dark" {
+    try {
+      const saved = localStorage.getItem("fm-theme");
+      if (saved === "light" || saved === "dark" || saved === "system") return saved;
+    } catch {
+      /* private mode */
+    }
+    return "system";
+  }
+
+  private applyTheme(theme: "system" | "light" | "dark"): void {
+    this.theme = theme;
+    this.root.dataset.theme = theme;
+    this.shell.dataset.theme = theme;
+    try {
+      localStorage.setItem("fm-theme", theme);
+    } catch {
+      /* ignore */
+    }
+    for (const button of this.shell.querySelectorAll<HTMLButtonElement>("[data-theme]")) {
+      button.classList.toggle("is-on", button.dataset.theme === theme);
+    }
+  }
+
+  private placeToolIndicator(): void {
+    const group = this.toolbar.querySelector(".tools");
+    const pill = group?.querySelector(".tool-indicator") as HTMLElement | null;
+    const on = group?.querySelector(".btn.is-on") as HTMLElement | null;
+    if (!(group instanceof HTMLElement) || !pill || !on) return;
+    pill.style.width = `${on.offsetWidth}px`;
+    pill.style.height = `${on.offsetHeight}px`;
+    pill.style.transform = `translate(${on.offsetLeft}px, ${on.offsetTop}px)`;
   }
 
   private async loadFile(file: File): Promise<void> {
@@ -1150,6 +1254,7 @@ class RedactorApp {
     }
     if (hasDoc) this.setStatus(this.statusLine());
     this.syncThumbActive();
+    this.placeToolIndicator();
   }
 
   private syncThumbActive(): void {

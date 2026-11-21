@@ -1,31 +1,36 @@
 const PATHS = {
   folder:
-    '<path d="M3.5 7.5h5.2l1.8 2H20.5v9.2a1.3 1.3 0 0 1-1.3 1.3H4.8a1.3 1.3 0 0 1-1.3-1.3V7.5z"/>',
-  download: '<path d="M12 4v10"/><path d="M8 10.5 12 14.5l4-4"/><path d="M5 18.5h14"/>',
+    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  download:
+    '<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/>',
   print:
-    '<path d="M6 9V3.5h12V9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v6.5H6z"/>',
-  undo: '<path d="M8 8H4.5V4.5"/><path d="M5 8.2A7.5 7.5 0 1 1 6.2 16"/>',
-  redo: '<path d="M16 8h3.5V4.5"/><path d="M19 8.2A7.5 7.5 0 1 0 17.8 16"/>',
+    '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+  redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"/>',
   trash:
-    '<path d="M5 7.5h14"/><path d="M9.5 7.4V5.2h5v2.2"/><path d="M7.2 7.5l.7 11h8.2l.7-11"/>',
-  minus: '<path d="M6 12h12"/>',
-  plus: '<path d="M12 6v12"/><path d="M6 12h12"/>',
-  fit: '<path d="M9 4.5H5.5V8"/><path d="M15 4.5h3.5V8"/><path d="M9 19.5H5.5V16"/><path d="M15 19.5h3.5V16"/>',
-  left: '<path d="M14.5 6.5 9 12l5.5 5.5"/>',
-  right: '<path d="M9.5 6.5 15 12l-5.5 5.5"/>',
-  rect: '<rect x="5" y="6" width="14" height="12" rx="1.5"/>',
+    '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  minus: '<path d="M5 12h14"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  rect: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
   brush:
-    '<path d="M15.2 4.8a2.2 2.2 0 0 1 3.1 3.1L9.4 16.8 6 18l1.2-3.4 7.9-9.8z"/><path d="M14 6.2 17.8 10"/>',
+    '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>',
   eraser:
-    '<path d="m15.5 4.5 4 4-8.2 8.2a2 2 0 0 1-2.8 0L5.2 13.4a2 2 0 0 1 0-2.8L9.8 6a2 2 0 0 1 2.8 0z"/><path d="M4.5 20h15"/><path d="m8 13 3.2 3.2"/>',
-  pan: '<path d="M12 3.5v17"/><path d="M3.5 12h17"/><path d="m8 7 4-4 4 4"/><path d="m8 17 4 4 4-4"/><path d="m7 8-4 4 4 4"/><path d="m17 8 4 4-4 4"/>',
-  turnLeft: '<path d="M4 12a8 8 0 1 0 2.6-6"/><path d="M4 4.5V9h4.5"/>',
-  turnRight: '<path d="M20 12a8 8 0 1 1-2.6-6"/><path d="M20 4.5V9h-4.5"/>',
-  tidy: '<path d="M5 7.5h14"/><path d="M6.5 12h11"/><path d="M8 16.5h8"/><path d="m8 7.5 2.2-3h3.6l2.2 3"/>',
+    '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+  pan: '<path d="M12 2v20"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/>',
+  turnLeft:
+    '<path d="M20 9V7a2 2 0 0 0-2-2h-6"/><path d="m15 2-3 3 3 3"/><path d="M20 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/>',
+  turnRight:
+    '<path d="M4 9V7a2 2 0 0 1 2-2h6"/><path d="m9 2 3 3-3 3"/><path d="M4 13v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>',
+  tidy: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/>',
+  theme:
+    '<path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/><circle cx="12" cy="12" r="4"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;
 
 export function icon(name: IconName): string {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${PATHS[name]}</svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name]}</svg>`;
 }
