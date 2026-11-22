@@ -378,7 +378,7 @@ class ImageDoc implements LoadedDoc {
 
 function pdfMessage(err: unknown): string {
   const name = errorName(err);
-  if (name === "PasswordException") return "這個 PDF 有密碼保護。請先在別的工具解除密碼，再拿到這裡塗改。";
+  if (name === "PasswordException") return "這個 PDF 有密碼保護。請先在別的工具解除密碼，再拿到這裡編輯。";
   if (name === "InvalidPDFException") return "無法讀取這個 PDF，檔案可能已損壞。";
   return "無法開啟這個 PDF。";
 }

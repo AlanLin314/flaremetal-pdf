@@ -43,7 +43,7 @@ class RedactorApp {
   private view: PageView | null = null;
   private pageIndex = 0;
   private zoom = 1;
-  private zoomMode: "fit-width" | "manual" = "fit-width";
+  private zoomMode: "fit-page" | "fit-width" | "manual" = "fit-page";
   private redactions: Redaction[] = [];
   private rotations: number[] = [];
   private selectedId: string | null = null;
@@ -88,6 +88,8 @@ class RedactorApp {
   private modalResolver: (() => void) | null = null;
   private stickToTop = false;
   private printFrame: HTMLIFrameElement | null = null;
+  private dockObs: ResizeObserver | null = null;
+  private lastReserve = -1;
 
   private readonly fileInput: HTMLInputElement;
   private readonly openBtn: HTMLButtonElement;
@@ -139,15 +141,21 @@ class RedactorApp {
               <button type="button" data-theme="dark">深色</button>
             </div>
           </div>
-          <button type="button" class="btn secondary" data-open>${icon("folder")}<span>開啟</span></button>
-          <button type="button" class="btn ghost" data-print disabled>${icon("print")}<span>列印</span></button>
-          <button type="button" class="btn primary" data-export disabled>${icon("download")}<span>匯出</span></button>
+          <button type="button" class="btn secondary" data-open title="開啟" aria-label="開啟">${icon("folder")}<span>開啟</span></button>
+          <button type="button" class="btn ghost" data-print disabled title="列印" aria-label="列印">${icon("print")}<span>列印</span></button>
+          <button type="button" class="btn primary" data-export disabled title="匯出" aria-label="匯出">${icon("download")}<span>匯出</span></button>
         </div>
       </header>
       <div class="workspace">
         <div class="rail">
           <button type="button" class="btn icon rail-toggle" data-rail title="縮圖" aria-label="縮圖" aria-expanded="true">${icon("left")}</button>
-          <aside class="thumbs" aria-label="頁面縮圖"></aside>
+          <aside class="thumbs" aria-label="頁面縮圖">
+            <div class="thumbs-head">
+              <span class="thumbs-title">頁面</span>
+              <button type="button" class="btn icon" data-rail title="關閉" aria-label="關閉頁面">${icon("left")}</button>
+            </div>
+            <div class="thumbs-list"></div>
+          </aside>
         </div>
         <div class="stage">
           <p class="alert" hidden></p>
@@ -155,7 +163,7 @@ class RedactorApp {
             <div class="empty-card">
               <img class="brand-logo on-dark" src="/flaremetal-logo.png" alt="" />
               <p class="kicker">FlareMetal</p>
-              <h2>塗改檔案</h2>
+              <h2>編輯檔案</h2>
               <p>拖放或選擇 PDF、JPG、PNG。檔案不會上傳。</p>
               <button type="button" class="btn primary" data-open-empty>${icon("folder")}選擇檔案</button>
             </div>
@@ -173,11 +181,13 @@ class RedactorApp {
         </div>
       </div>
       <div class="float-bottom">
-        <div class="dock-wrap">
-          <div class="toolbar" role="toolbar" aria-label="塗改工具"></div>
-        </div>
-        <div class="zoom-dock" role="toolbar" aria-label="縮放與頁面">
-          <footer class="status" role="status">尚未開啟檔案 · 不會上傳</footer>
+        <div class="dock">
+          <div class="tool-clip">
+            <div class="toolbar" role="toolbar" aria-label="編輯工具"></div>
+          </div>
+          <div class="zoom-dock" role="toolbar" aria-label="縮放與頁面">
+            <footer class="status" role="status">尚未開啟檔案 · 不會上傳</footer>
+          </div>
         </div>
       </div>
       <div class="scrim" hidden></div>
@@ -187,7 +197,7 @@ class RedactorApp {
           <h2>整理</h2>
           <button type="button" class="btn icon" data-clean-close aria-label="關閉整理">${icon("left")}</button>
         </div>
-        <p class="clean-note">只在這台裝置上處理，不會上傳。建議先整理，再塗改。</p>
+        <p class="clean-note">只在這台裝置上處理，不會上傳。建議先整理，再編輯。</p>
         <div class="clean-view">
           <div class="clean-source-wrap">
             <canvas class="clean-source" hidden></canvas>
@@ -205,12 +215,8 @@ class RedactorApp {
     `;
     this.root.append(this.shell);
     this.applyTheme(this.readTheme());
-    if (window.matchMedia("(max-width: 1000px)").matches) {
-      this.shell.classList.add("is-rail-closed");
-      const railBtn = this.shell.querySelector("[data-rail]");
-      railBtn?.setAttribute("aria-expanded", "false");
-      if (railBtn) railBtn.innerHTML = icon("right");
-    }
+    if (window.matchMedia("(max-width: 1000px)").matches) this.shell.classList.add("is-rail-closed");
+    this.syncRail();
 
     this.fileInput = document.createElement("input");
     this.fileInput.type = "file";
@@ -221,7 +227,7 @@ class RedactorApp {
     this.openBtn = this.shell.querySelector("[data-open]") as HTMLButtonElement;
     this.exportBtn = this.shell.querySelector("[data-export]") as HTMLButtonElement;
     this.printBtn = this.shell.querySelector("[data-print]") as HTMLButtonElement;
-    this.thumbs = this.shell.querySelector(".thumbs") as HTMLElement;
+    this.thumbs = this.shell.querySelector(".thumbs-list") as HTMLElement;
     this.toolbar = this.shell.querySelector(".toolbar") as HTMLElement;
     this.stage = this.shell.querySelector(".stage") as HTMLElement;
     this.empty = this.shell.querySelector(".empty") as HTMLElement;
@@ -243,11 +249,56 @@ class RedactorApp {
   destroy(): void {
     this.exportAbort?.abort();
     this.thumbObs?.disconnect();
+    this.dockObs?.disconnect();
     this.doc?.close();
     this.releaseAllRasters();
     this.printFrame?.remove();
     this.ac.abort();
     this.root.replaceChildren();
+  }
+
+  private toggleRail(): void {
+    this.shell.classList.toggle("is-rail-closed");
+    this.syncRail();
+    if (this.doc && (this.zoomMode === "fit-page" || this.zoomMode === "fit-width")) void this.renderMain();
+  }
+
+  private syncRail(): void {
+    const closed = this.shell.classList.contains("is-rail-closed");
+    const opener = this.shell.querySelector(".rail-toggle");
+    if (opener) {
+      opener.setAttribute("aria-expanded", String(!closed));
+      opener.innerHTML = icon(closed ? "right" : "left");
+    }
+  }
+
+  private bottomReserve(): number {
+    const dock = this.shell.querySelector(".dock");
+    const height = dock instanceof HTMLElement ? dock.getBoundingClientRect().height : 0;
+    if (height < 8) return 88;
+    return height > 70 ? Math.max(140, Math.ceil(height + 24)) : Math.max(84, Math.ceil(height + 32));
+  }
+
+  private syncDockPad(): boolean {
+    const reserve = this.bottomReserve();
+    this.stage.style.paddingBottom = `calc(${reserve}px + env(safe-area-inset-bottom))`;
+    const changed = reserve !== this.lastReserve;
+    this.lastReserve = reserve;
+    return changed;
+  }
+
+  private syncToolbarFade(): void {
+    this.markScrollFade(this.toolbar);
+    const zoom = this.shell.querySelector(".zoom-dock");
+    if (zoom instanceof HTMLElement) this.markScrollFade(zoom);
+  }
+
+  private markScrollFade(node: HTMLElement): void {
+    const host = node.classList.contains("toolbar") ? node.parentElement : node;
+    if (!host) return;
+    const overflow = node.scrollWidth - node.clientWidth;
+    host.classList.toggle("can-left", node.scrollLeft > 2);
+    host.classList.toggle("can-right", overflow - node.scrollLeft > 2);
   }
 
   private bind(): void {
@@ -296,17 +347,28 @@ class RedactorApp {
         if (pop) pop.hidden = true;
       }, { signal });
     });
-    this.shell.querySelector("[data-rail]")?.addEventListener("click", () => {
-      const closed = this.shell.classList.toggle("is-rail-closed");
-      const button = this.shell.querySelector("[data-rail]");
-      button?.setAttribute("aria-expanded", String(!closed));
-      if (button) button.innerHTML = icon(closed ? "right" : "left");
-    }, { signal });
+    this.shell.querySelectorAll("[data-rail]").forEach((button) => {
+      button.addEventListener("click", () => this.toggleRail(), { signal });
+    });
 
     window.addEventListener("resize", () => {
       this.placeToolIndicator();
-      if (this.doc && this.zoomMode === "fit-width") void this.renderMain();
+      this.syncToolbarFade();
+      if (this.doc && (this.zoomMode === "fit-page" || this.zoomMode === "fit-width")) void this.renderMain();
     }, { signal });
+    this.toolbar.addEventListener("scroll", () => this.syncToolbarFade(), { signal, passive: true });
+    this.shell.querySelector(".zoom-dock")?.addEventListener("scroll", () => this.syncToolbarFade(), { signal, passive: true });
+    const dock = this.shell.querySelector(".dock");
+    if (dock instanceof HTMLElement && "ResizeObserver" in window) {
+      this.dockObs = new ResizeObserver(() => {
+        this.syncToolbarFade();
+        const changed = this.syncDockPad();
+        if (changed && this.doc && (this.zoomMode === "fit-page" || this.zoomMode === "fit-width")) void this.renderMain();
+      });
+      this.dockObs.observe(dock);
+    }
+    this.syncDockPad();
+    this.syncToolbarFade();
 
     this.stage.addEventListener("wheel", (event) => {
       if (!this.doc || (!event.ctrlKey && !event.metaKey)) return;
@@ -420,9 +482,9 @@ class RedactorApp {
       this.zoomMode = "fit-width";
       void this.renderMain();
     });
-    const fit = toolButton("fit", "符合寬度");
+    const fit = toolButton("fit", "符合頁面");
     fit.addEventListener("click", () => {
-      this.zoomMode = "fit-width";
+      this.zoomMode = "fit-page";
       void this.renderMain();
     });
 
@@ -451,7 +513,10 @@ class RedactorApp {
     pages.append(this.prevBtn, this.nextBtn, allLeft, allRight);
 
     this.toolbar.append(tools, sep(), size, colorGroup, sep(), history, sep(), tidyBtn);
-    this.shell.querySelector(".zoom-dock")?.append(zoom, pages);
+    const zoomDock = this.shell.querySelector(".zoom-dock");
+    const status = zoomDock?.querySelector(".status");
+    if (status) zoomDock?.prepend(status);
+    zoomDock?.append(zoom, pages);
     this.syncChrome();
   }
 
@@ -508,7 +573,7 @@ class RedactorApp {
       this.doc = next;
       this.view = null;
       this.pageIndex = 0;
-      this.zoomMode = "fit-width";
+      this.zoomMode = "fit-page";
       this.redactions = [];
       this.rotations = Array.from({ length: next.pageCount }, () => 0);
       this.undo = [];
@@ -602,14 +667,21 @@ class RedactorApp {
     if (token !== this.mainToken) return;
     this.view = view;
     const canvas = this.ensureCanvas();
-    if (this.zoomMode === "fit-width") {
+    this.syncDockPad();
+    if (this.zoomMode === "fit-page" || this.zoomMode === "fit-width") {
       if (this.stage.clientWidth < 40) {
         await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
       }
       const styles = getComputedStyle(this.stage);
       const padX = (Number.parseFloat(styles.paddingLeft) || 0) + (Number.parseFloat(styles.paddingRight) || 0);
-      const avail = Math.max(160, this.stage.clientWidth - padX - 8);
-      this.zoom = clamp(avail / view.metrics.width, 0.2, 4);
+      const padTop = Number.parseFloat(styles.paddingTop) || 0;
+      const availW = Math.max(80, this.stage.clientWidth - padX);
+      if (this.zoomMode === "fit-width") {
+        this.zoom = clamp(availW / view.metrics.width, 0.2, 4);
+      } else {
+        const availH = Math.max(80, this.stage.clientHeight - padTop - this.bottomReserve() - 24);
+        this.zoom = clamp(Math.min(availW / view.metrics.width, availH / view.metrics.height), 0.2, 4);
+      }
     }
     const cssW = view.metrics.width * this.zoom;
     const cssH = view.metrics.height * this.zoom;
@@ -1258,8 +1330,8 @@ class RedactorApp {
   private statusLine(): string {
     if (!this.doc) return "尚未開啟檔案 · 不會上傳";
     const turned = normalizeRotation(this.rotations[this.pageIndex] ?? 0);
-    const angle = turned ? ` · 已轉 ${turned}°` : "";
-    return `第 ${this.pageIndex + 1} / ${this.doc.pageCount} 頁${angle}`;
+    const angle = turned ? ` · ${turned}°` : "";
+    return `第 ${this.pageIndex + 1}／${this.doc.pageCount} 頁${angle}`;
   }
 
   private setStatus(text: string): void {
@@ -1563,7 +1635,7 @@ class RedactorApp {
       "lead",
       how === "tab"
         ? `這個瀏覽器不能在畫面裡直接列印，已改在新分頁開啟 PDF。請用那一頁的列印功能。${note}`
-        : `列印對話框應已出現。頁面尺寸和方向沿用塗改後的 PDF，不會多出這層網頁的邊框。${note}`,
+        : `列印對話框應已出現。頁面尺寸和方向沿用編輯後的 PDF，不會多出這層網頁的邊框。${note}`,
     );
     const close = document.createElement("button");
     close.type = "button";
@@ -1912,7 +1984,7 @@ class RedactorApp {
     const geometry = this.cleanOpts.perspective || this.cleanOpts.deskew;
     const marked = indexes.some((index) => this.redactions.some((item) => item.page === index));
     if (geometry && marked) {
-      const ok = await this.confirm("裁切或轉正會改變頁面形狀，這些頁面上的遮蓋會被清掉。建議先整理，再塗改。要繼續嗎？");
+      const ok = await this.confirm("裁切或轉正會改變頁面形狀，這些頁面上的遮蓋會被清掉。建議先整理，再編輯。要繼續嗎？");
       if (!ok) return;
     }
     this.busy = true;
