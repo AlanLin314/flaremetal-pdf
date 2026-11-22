@@ -1,3 +1,4 @@
+import "./fonts.css";
 import "./redactor/ui.css";
 import { mountRedactor } from "./redactor/ui";
 

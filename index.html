@@ -8,7 +8,13 @@
       name="description"
       content="在瀏覽器裡塗改 PDF 與圖片。檔案只在您的裝置上處理，不會上傳。"
     />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#2a6f97" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" href="/flaremetal-logoicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      try{if(localStorage.getItem('fm-theme')==='dark')document.documentElement.setAttribute('data-theme','dark')}catch(e){}
+    </script>
   </head>
   <body>
     <div id="app"></div>
