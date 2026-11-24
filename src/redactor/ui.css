@@ -61,6 +61,7 @@ html[data-theme="dark"] body {
   --fm-warn-bg: #fff4e5;
   --fm-warn-ink: #b54708;
   --thumb-box: 108px;
+  --turn-col: 36px;
   height: 100dvh;
   color: var(--fm-color-text);
   background: var(--fm-color-bg);
@@ -441,11 +442,9 @@ html[data-theme="dark"] body {
   width: 100%;
   flex: none;
   display: grid;
-  grid-template-columns: var(--thumb-box) auto;
-  grid-template-rows: var(--thumb-box) auto;
+  grid-template-columns: minmax(0, 1fr) var(--turn-col);
   column-gap: 8px;
-  justify-content: start;
-  align-items: center;
+  align-items: start;
   padding: 6px;
   border-radius: 0.75rem;
   border: 2px solid transparent;
@@ -463,22 +462,20 @@ html[data-theme="dark"] body {
 
 .thumb-open {
   grid-column: 1;
-  grid-row: 1 / span 2;
-  width: var(--thumb-box);
+  grid-row: 1;
+  width: 100%;
+  min-width: 0;
   border: 0;
   background: transparent;
   padding: 0;
   color: inherit;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  display: block;
 }
 
 .thumb-frame {
   position: relative;
-  width: var(--thumb-box);
-  height: var(--thumb-box);
+  width: 100%;
+  aspect-ratio: 1 / 1.3;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -523,23 +520,25 @@ html[data-theme="dark"] body {
 
 .thumb-no {
   display: block;
-  height: 18px;
+  width: 100%;
   margin: 0;
   font-size: 0.82rem;
   font-weight: 600;
-  line-height: 18px;
+  line-height: 1.2;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  color: var(--fm-color-text);
+  color: var(--fm-color-text-muted);
 }
 
 .thumb-turns {
   grid-column: 2;
   grid-row: 1;
-  align-self: center;
-  justify-self: start;
+  width: var(--turn-col);
+  align-self: start;
+  justify-self: center;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
 }
 
@@ -1319,7 +1318,7 @@ input[type="checkbox"] {
 
   .thumbs,
   .fm-app.is-rail-closed .thumbs {
-    --thumb-box: 144px;
+    --turn-col: 44px;
     position: fixed;
     z-index: 35;
     top: 64px;
@@ -1433,6 +1432,9 @@ input[type="checkbox"] {
 }
 
 @media (pointer: coarse) {
+  .redactor-host {
+    --turn-col: 44px;
+  }
   .toolbar,
   .zoom-dock {
     height: 56px;

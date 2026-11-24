@@ -631,9 +631,7 @@ class RedactorApp {
       const open = document.createElement("button");
       open.type = "button";
       open.className = "thumb-open";
-      open.innerHTML = `<span class="thumb-frame"><span class="thumb-fit"><canvas></canvas><span class="marks"></span></span></span><span class="thumb-no"></span>`;
-      const label = open.querySelector(".thumb-no");
-      if (label) label.textContent = String(index + 1);
+      open.innerHTML = `<span class="thumb-frame"><span class="thumb-fit"><canvas></canvas><span class="marks"></span></span></span>`;
       open.setAttribute("aria-label", `第 ${index + 1} 頁`);
       open.addEventListener("click", () => this.goTo(index));
       const turns = document.createElement("div");
@@ -652,6 +650,10 @@ class RedactorApp {
         });
         turns.append(turn);
       }
+      const label = document.createElement("span");
+      label.className = "thumb-no";
+      label.textContent = String(index + 1);
+      turns.append(label);
       item.append(open, turns);
       this.thumbs.append(item);
       observer.observe(item);
@@ -2163,8 +2165,9 @@ function appendStroke(
 
 function placeThumbCanvas(canvas: HTMLCanvasElement, pageW: number, pageH: number): void {
   const frame = canvas.closest(".thumb-frame");
-  const box = frame instanceof HTMLElement && frame.clientWidth > 0 ? frame.clientWidth : 120;
-  const scale = Math.min(box / Math.max(pageW, 1), box / Math.max(pageH, 1));
+  const boxW = frame instanceof HTMLElement && frame.clientWidth > 0 ? frame.clientWidth : 120;
+  const boxH = frame instanceof HTMLElement && frame.clientHeight > 0 ? frame.clientHeight : boxW * 1.3;
+  const scale = Math.min(boxW / Math.max(pageW, 1), boxH / Math.max(pageH, 1));
   canvas.style.width = `${pageW * scale}px`;
   canvas.style.height = `${pageH * scale}px`;
 }
