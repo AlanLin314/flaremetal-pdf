@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF 蓋章工具 - 採購章 / 其他章</title>
+  <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
+      margin: 0;
+      background: #f4f6f8;
+      color: #1a1a1a;
+    }
+    header {
+      background: #1e293b;
+      color: white;
+      padding: 16px 24px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .container {
+      display: flex;
+      height: calc(100vh - 56px);
+    }
+    .sidebar {
+      width: 320px;
+      background: white;
+      border-right: 1px solid #e2e8f0;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .preview-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      overflow: auto;
+    }
+    label { display: block; margin: 12px 0 6px; font-weight: 500; font-size: 14px; }
+    input[type="file"], input[type="number"], input[type="range"], select, button {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      cursor: pointer;
+      margin-top: 12px;
+      font-weight: 500;
+    }
+    button:hover { background: #1d4ed8; }
+    button.secondary { background: #64748b; }
+    button.secondary:hover { background: #475569; }
+    .page-nav {
+      display: flex;
+      gap: 8px;
+      margin: 12px 0;
+      align-items: center;
+    }
+    .page-nav button { width: auto; margin: 0; padding: 6px 12px; }
+    #pdf-canvas {
+      border: 1px solid #cbd5e1;
+      background: white;
+      cursor: crosshair;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      max-width: 100%;
+    }
+    #stamp-preview {
+      max-width: 120px;
+      max-height: 120px;
+      margin: 8px 0;
+      border: 1px dashed #94a3b8;
+    }
+    .info { font-size: 12px; color: #64748b; margin-top: 4px; }
+    .stamp-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: #f8fafc;
+      border-radius: 6px;
+      margin: 6px 0;
+      font-size: 13px;
+    }
+    .stamp-item img { width: 40px; height: 40px; object-fit: contain; }
+  </style>
+</head>
+<body>
+  <header>PDF 蓋章工具（採購章 / 其他章）</header>
+  <div class="container">
+    <div class="sidebar">
+      <label>1. 上傳 PDF</label>
+      <input type="file" id="pdf-input" accept="application/pdf">
+
+      <label>2. 上傳印章圖片（建議透明 PNG）</label>
+      <input type="file" id="stamp-input" accept="image/png,image/jpeg,image/jpg">
+      <img id="stamp-preview" alt="印章預覽" style="display:none;">
+
+      <label>印章大小（寬度，單位：點）</label>
+      <input type="number" id="stamp-width" value="100" min="20" max="400" step="5">
+      <div class="info">建議 80～150，依實際章大小調整</div>
+
+      <label>透明度</label>
+      <input type="range" id="opacity" min="0.3" max="1" step="0.05" value="0.9">
+      <div class="info" id="opacity-val">90%</div>
+
+      <div class="page-nav">
+        <button id="prev-page" class="secondary">上一頁</button>
+        <span id="page-info">頁 0 / 0</span>
+        <button id="next-page" class="secondary">下一頁</button>
+      </div>
+
+      <label>已放置的章（本頁）</label>
+      <div id="stamps-list"></div>
+
+      <button id="apply-btn">套用蓋章並下載 PDF</button>
+      <button id="clear-page" class="secondary">清除本頁所有章</button>
+      <button id="apply-all" class="secondary">將目前位置套用到所有頁</button>
+
+      <div class="info" style="margin-top:20px;">
+        使用方式：上傳 PDF → 上傳印章 → 在右側預覽上點擊放置 → 調整大小與透明度 → 下載。
+        <br>座標以 PDF 點為單位（左下角為原點）。
+      </div>
+    </div>
+
+    <div class="preview-area">
+      <canvas id="pdf-canvas"></canvas>
+    </div>
+  </div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+const { PDFDocument, degrees } = PDFLib;
+
+let pdfDocBytes = null;
+let pdfDoc = null;
+let pdfjsDoc = null;
+let currentPage = 1;
+let totalPages = 0;
+let stampImage = null;
+let stampBytes = null;
+let stampType = null; // 'png' or 'jpg'
+let stamps = {}; // pageNum -> [{x, y, width, height, opacity}]
+let scale = 1.2;
+
+const canvas = document.getElementById('pdf-canvas');
+const ctx = canvas.getContext('2d');
+
+document.getElementById('pdf-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  pdfDocBytes = await file.arrayBuffer();
+  pdfDoc = await PDFDocument.load(pdfDocBytes);
+  const loadingTask = pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) });
+  pdfjsDoc = await loadingTask.promise;
+  totalPages = pdfjsDoc.numPages;
+  currentPage = 1;
+  stamps = {};
+  updatePageInfo();
+  renderPage();
+});
+
+document.getElementById('stamp-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  stampBytes = await file.arrayBuffer();
+  stampType = file.type.includes('png') ? 'png' : 'jpg';
+  const url = URL.createObjectURL(file);
+  const img = document.getElementById('stamp-preview');
+  img.src = url;
+  img.style.display = 'block';
+  stampImage = new Image();
+  stampImage.src = url;
+});
+
+document.getElementById('opacity').addEventListener('input', (e) => {
+  document.getElementById('opacity-val').textContent = Math.round(e.target.value * 100) + '%';
+});
+
+document.getElementById('prev-page').onclick = () => {
+  if (currentPage > 1) { currentPage--; updatePageInfo(); renderPage(); }
+};
+document.getElementById('next-page').onclick = () => {
+  if (currentPage < totalPages) { currentPage++; updatePageInfo(); renderPage(); }
+};
+
+function updatePageInfo() {
+  document.getElementById('page-info').textContent = `頁 ${currentPage} / ${totalPages}`;
+  renderStampsList();
+}
+
+async function renderPage() {
+  if (!pdfjsDoc) return;
+  const page = await pdfjsDoc.getPage(currentPage);
+  const viewport = page.getViewport({ scale });
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  drawStampsOnCanvas();
+}
+
+function drawStampsOnCanvas() {
+  if (!stampImage || !stamps[currentPage]) return;
+  const pageStamps = stamps[currentPage];
+  pageStamps.forEach(s => {
+    const x = s.x * scale;
+    const y = canvas.height - (s.y + s.height) * scale; // flip Y
+    ctx.globalAlpha = s.opacity;
+    ctx.drawImage(stampImage, x, y, s.width * scale, s.height * scale);
+    ctx.globalAlpha = 1;
+  });
+}
+
+canvas.addEventListener('click', (e) => {
+  if (!stampImage || !pdfDoc) return;
+  const rect = canvas.getBoundingClientRect();
+  const clickX = (e.clientX - rect.left) / scale;
+  const clickY = (canvas.height - (e.clientY - rect.top)) / scale; // flip to PDF coords
+
+  const width = parseFloat(document.getElementById('stamp-width').value) || 100;
+  const aspect = stampImage.naturalWidth / stampImage.naturalHeight || 1;
+  const height = width / aspect;
+  const opacity = parseFloat(document.getElementById('opacity').value);
+
+  if (!stamps[currentPage]) stamps[currentPage] = [];
+  stamps[currentPage].push({
+    x: clickX - width / 2,
+    y: clickY - height / 2,
+    width,
+    height,
+    opacity
+  });
+  renderPage();
+  renderStampsList();
+});
+
+function renderStampsList() {
+  const list = document.getElementById('stamps-list');
+  list.innerHTML = '';
+  const pageStamps = stamps[currentPage] || [];
+  pageStamps.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'stamp-item';
+    div.innerHTML = `<span>章 ${i+1} (x:${s.x.toFixed(0)}, y:${s.y.toFixed(0)})</span>
+      <button class="secondary" style="width:auto;padding:2px 8px;" onclick="removeStamp(${i})">刪除</button>`;
+    list.appendChild(div);
+  });
+}
+
+window.removeStamp = (idx) => {
+  stamps[currentPage].splice(idx, 1);
+  renderPage();
+  renderStampsList();
+};
+
+document.getElementById('clear-page').onclick = () => {
+  stamps[currentPage] = [];
+  renderPage();
+  renderStampsList();
+};
+
+document.getElementById('apply-all').onclick = () => {
+  if (!stamps[currentPage] || stamps[currentPage].length === 0) {
+    alert('請先在本頁放置至少一個章');
+    return;
+  }
+  const template = stamps[currentPage].map(s => ({...s}));
+  for (let p = 1; p <= totalPages; p++) {
+    stamps[p] = template.map(s => ({...s}));
+  }
+  alert('已套用到所有頁面（位置相同）');
+  renderPage();
+};
+
+document.getElementById('apply-btn').onclick = async () => {
+  if (!pdfDocBytes || !stampBytes) {
+    alert('請先上傳 PDF 與印章圖片');
+    return;
+  }
+  const newPdf = await PDFDocument.load(pdfDocBytes);
+  let embeddedImage;
+  if (stampType === 'png') {
+    embeddedImage = await newPdf.embedPng(stampBytes);
+  } else {
+    embeddedImage = await newPdf.embedJpg(stampBytes);
+  }
+
+  const pages = newPdf.getPages();
+  for (let i = 0; i < pages.length; i++) {
+    const pageNum = i + 1;
+    const pageStamps = stamps[pageNum] || [];
+    const page = pages[i];
+    for (const s of pageStamps) {
+      page.drawImage(embeddedImage, {
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height,
+        opacity: s.opacity
+      });
+    }
+  }
+
+  const pdfBytes = await newPdf.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '已蓋章.pdf';
+  a.click();
+};
+</script>
+</body>
+</html>
