@@ -22,7 +22,18 @@ export type StrokeMark = {
   points: UserPoint[];
 };
 
-export type Redaction = RectMark | StrokeMark;
+/** Image stamp / seal in unrotated PDF user space. */
+export type StampMark = {
+  kind: "stamp";
+  id: string;
+  page: number;
+  rect: UserRect;
+  opacity: number;
+  /** Data URL or blob reference for the stamp image. */
+  imageData: string;
+};
+
+export type Redaction = RectMark | StrokeMark | StampMark;
 
 export type HistoryState = {
   redactions: Redaction[];
